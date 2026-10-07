@@ -747,7 +747,7 @@ export const layerDeviceToolkit = Layer.mergeAll(
 );
 
 const layerMcpTransport = McpServer.layerHttp({
-  name: "T3 Code",
+  name: "DCode",
   version: packageJson.version,
   path: "/mcp",
   protocols: [McpProtocol.v2025_06_18],

@@ -8,7 +8,7 @@ import type { MessageKey } from "./en.ts";
  * the `MessageKey` union.
  */
 export const zhCNMessages: Partial<Record<MessageKey, string>> = {
-  "app.name": "T3 Code",
+  "app.name": "DCode",
   "action.save": "保存",
   "action.cancel": "取消",
   "settings.title": "设置",
@@ -190,7 +190,7 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "desktop.menu.zoomIn": "放大",
   "desktop.menu.zoomOut": "缩小",
   "desktop.update.upToDateTitle": "已是最新版本！",
-  "desktop.update.upToDateMessage": "T3 Code {version} 当前已是最新可用版本。",
+  "desktop.update.upToDateMessage": "DCode {version} 当前已是最新可用版本。",
   "desktop.update.checkFailedTitle": "检查更新失败",
   "desktop.update.checkFailedMessage": "无法检查更新。",
   "desktop.update.checkFailedDetail": "发生未知错误，请稍后重试。",
@@ -199,13 +199,13 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "desktop.contextMenu.noSuggestions": "暂无建议",
   "desktop.contextMenu.copyLink": "复制链接",
   "desktop.contextMenu.copyImage": "复制图片",
-  "desktop.startup.failedTitle": "T3 Code 启动失败",
+  "desktop.startup.failedTitle": "DCode 启动失败",
   "desktop.startup.failedDetail": "阶段：{stage}\n{message}{detail}",
   "desktop.wsl.unavailableTitle": "WSL 后端仍不可用",
   "desktop.wsl.unavailableMessage":
-    "{reason}\n\nT3 Code 本次启动将改用 Windows 后端，并将在下次启动时重试 WSL。",
+    "{reason}\n\nDCode 本次启动将改用 Windows 后端，并将在下次启动时重试 WSL。",
   "desktop.wsl.couldNotStartTitle": "WSL 后端无法启动",
   "desktop.wsl.couldNotStartMessage":
-    "{reason}\n\n已回退到 Windows 后端以确保 T3 Code 可以打开。修复 WSL 发行版后，请在“设置 > 连接”中重新启用 WSL 后端。",
+    "{reason}\n\n已回退到 Windows 后端以确保 DCode 可以打开。修复 WSL 发行版后，请在“设置 > 连接”中重新启用 WSL 后端。",
   "desktop.splash.connecting": "正在连接 WSL…",
 };

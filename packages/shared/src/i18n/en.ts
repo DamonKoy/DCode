@@ -4,7 +4,7 @@
  * Missing keys in the active locale always fall back to this file.
  */
 export const enMessages = {
-  "app.name": "T3 Code",
+  "app.name": "DCode",
   "action.save": "Save",
   "action.cancel": "Cancel",
   "settings.title": "Settings",
@@ -189,7 +189,7 @@ export const enMessages = {
   "desktop.menu.zoomIn": "Zoom In",
   "desktop.menu.zoomOut": "Zoom Out",
   "desktop.update.upToDateTitle": "You're up to date!",
-  "desktop.update.upToDateMessage": "T3 Code {version} is currently the newest version available.",
+  "desktop.update.upToDateMessage": "DCode {version} is currently the newest version available.",
   "desktop.update.checkFailedTitle": "Update check failed",
   "desktop.update.checkFailedMessage": "Could not check for updates.",
   "desktop.update.checkFailedDetail": "An unknown error occurred. Please try again later.",
@@ -198,14 +198,14 @@ export const enMessages = {
   "desktop.contextMenu.noSuggestions": "No suggestions",
   "desktop.contextMenu.copyLink": "Copy Link",
   "desktop.contextMenu.copyImage": "Copy Image",
-  "desktop.startup.failedTitle": "T3 Code failed to start",
+  "desktop.startup.failedTitle": "DCode failed to start",
   "desktop.startup.failedDetail": "Stage: {stage}\n{message}{detail}",
   "desktop.wsl.unavailableTitle": "WSL backend is still unavailable",
   "desktop.wsl.unavailableMessage":
-    "{reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.",
+    "{reason}\n\nDCode will use the Windows backend for this launch and retry WSL the next time the app starts.",
   "desktop.wsl.couldNotStartTitle": "WSL backend couldn't start",
   "desktop.wsl.couldNotStartMessage":
-    "{reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.",
+    "{reason}\n\nFalling back to the Windows backend so DCode can open. Re-enable the WSL backend from Settings > Connections once the WSL distro is fixed.",
   "desktop.splash.connecting": "Connecting to WSL…",
 } as const;
 
