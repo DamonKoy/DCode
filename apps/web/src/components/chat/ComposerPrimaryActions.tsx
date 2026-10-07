@@ -3,6 +3,7 @@ import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, PlayIcon } from "lucide-re
 import { CornerUpRight, ListPlus } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useEnvironmentIdentificationMode } from "~/hooks/useSettings";
+import { useI18n } from "~/hooks/useI18n";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "../../shortcutModifierState";
 import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../SidebarStageBackdrop";
@@ -116,6 +117,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     }) === "queue";
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = sendDisabledReason !== null;
+  const { t } = useI18n();
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
@@ -265,13 +267,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     ? "Environment disconnected"
     : (sendDisabledReason ??
       (isConnecting
-        ? "Connecting"
+        ? t("chat.composer.connecting")
         : isPreparingWorktree
-          ? "Preparing worktree"
+          ? t("chat.composer.preparingWorktree")
           : isSendBusy
             ? isEditingQueuedMessage
               ? "Updating queued message"
-              : "Submitting message"
+              : t("chat.composer.sending")
             : null));
   const submitTooltip =
     submitStatus ??

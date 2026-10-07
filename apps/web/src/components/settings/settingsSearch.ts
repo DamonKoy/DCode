@@ -1,3 +1,5 @@
+import type { MessageKey } from "@t3tools/shared/i18n";
+import { settingsText } from "./settingsCopy";
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
@@ -99,6 +101,21 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/archived": "Archive",
+};
+
+export const SETTINGS_SECTION_LABEL_KEYS: Readonly<Record<SettingsPath, MessageKey>> = {
+  "/settings/projects": "settings.section.projects",
+  "/settings/general": "settings.section.general",
+  "/settings/appearance": "settings.section.appearance",
+  "/settings/keybindings": "settings.section.keybindings",
+  "/settings/snap-shot": "settings.section.snapShot",
+  "/settings/providers": "settings.section.providers",
+  "/settings/integrations": "settings.section.integrations",
+  "/settings/scheduled-tasks": "settings.section.scheduledTasks",
+  "/settings/source-control": "settings.section.sourceControl",
+  "/settings/storage": "settings.section.storage",
+  "/settings/connections": "settings.section.connections",
+  "/settings/archived": "settings.section.archive",
 };
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
@@ -1061,7 +1078,9 @@ export function searchSettings(
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
+        normalizeSearchText(settingsText(item.title)),
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
+        normalizeSearchText(settingsText(SETTINGS_SECTION_LABELS[item.to])),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];

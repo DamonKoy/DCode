@@ -20,6 +20,17 @@ class CatalogDependencyResolutionError extends Schema.TaggedError<CatalogDepende
  * Pure function: returns a new record with every `catalog:…` value replaced by
  * the concrete version string found in `catalog`. Throws on missing entries.
  */
+function catalogPackageName(selector: string): string {
+  const selected = selector.split(">").at(-1) ?? selector;
+  if (selected.startsWith("@")) {
+    const slash = selected.indexOf("/");
+    const versionAt = selected.indexOf("@", slash + 1);
+    return versionAt === -1 ? selected : selected.slice(0, versionAt);
+  }
+  const versionAt = selected.indexOf("@");
+  return versionAt === -1 ? selected : selected.slice(0, versionAt);
+}
+
 export function resolveCatalogDependencies(
   dependencies: Record<string, string>,
   catalog: Record<string, string>,
@@ -32,10 +43,10 @@ export function resolveCatalogDependencies(
       }
 
       const catalogKey = spec.slice("catalog:".length).trim();
-      // An override key can be a selector such as `@scope/parent>effect`; like
-      // pnpm, a bare `catalog:` there means the catalog entry of the package
-      // the selector ends in.
-      const lookupKey = catalogKey.length > 0 ? catalogKey : (name.split(">").at(-1) ?? name);
+      // An override key can be a selector such as `@scope/parent>effect` or
+      // `undici@^8`. A bare `catalog:` means the catalog entry of the package
+      // the selector ends in, without its version range.
+      const lookupKey = catalogKey.length > 0 ? catalogKey : catalogPackageName(name);
       const resolved = catalog[lookupKey];
 
       if (typeof resolved !== "string" || resolved.length === 0) {

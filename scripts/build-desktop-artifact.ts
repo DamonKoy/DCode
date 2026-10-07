@@ -940,7 +940,7 @@ interface StagePackageJson {
 }
 
 export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
-export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
+export const DESKTOP_ELECTRON_LANGUAGES = ["zh-CN", "en-US"] as const;
 export const DESKTOP_FILE_EXCLUSIONS = [
   // Cursor finds platform assets by walking up from argv[1]. Keep them outside
   // asar so spawning helpers and loading native addons both use real paths.
@@ -2667,9 +2667,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const appId = process.env.T3CODE_DESKTOP_APP_ID?.trim() || DESKTOP_APP_ID;
+  const productName =
+    process.env.T3CODE_DESKTOP_PRODUCT_NAME?.trim() || resolveDesktopProductName(version);
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
-    productName: resolveDesktopProductName(version),
+    appId,
+    productName,
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
@@ -3732,7 +3735,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     arch: options.arch,
     allowBuilds: workspaceAllowBuilds,
     patchedDependencies: stagePatchedDependencies,
-    overrides: resolvedOverrides,
+    overrides: {
+      ...resolvedOverrides,
+      // zod@3.25.0 on npm ships package.json pointing at dist/commonjs but the
+      // tarball has no dist. The lockfile uses 3.25.76, whose index.cjs exists.
+      zod: "3.25.76",
+    },
   });
   const stageWorkspaceConfigString = yield* encodeStageWorkspaceConfig(stageWorkspaceConfig);
   yield* fs.writeFileString(

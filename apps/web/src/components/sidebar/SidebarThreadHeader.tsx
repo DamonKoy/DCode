@@ -18,6 +18,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useI18n } from "../../hooks/useI18n";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -68,6 +69,7 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const { t } = useI18n();
   const resultsVisible = isSearching && searchResultCount > 0;
   // Results shrink as the query narrows, so the active index can outrun the
   // list; pointing aria-activedescendant at a removed option strands the
@@ -91,8 +93,8 @@ export function SidebarThreadHeader({
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
-          placeholder="Search"
-          aria-label="Search threads"
+          placeholder={t("sidebar.search")}
+          aria-label={t("sidebar.searchThreads")}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}

@@ -40,6 +40,7 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { useI18n } from "~/hooks/useI18n";
 
 // Menu value for "No project"; real entries are keyed by logical project key.
 const NO_PROJECT_VALUE = "no-project";
@@ -55,6 +56,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const { t } = useI18n();
   const projects = useProjects();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
@@ -242,7 +244,7 @@ export function DraftHeroHeadline({
           }
         >
           <span className="min-w-0 truncate">
-            {isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
+            {isScratchDraft ? "No project" : (activeProjectDisplayName ?? t("draft.chooseProject"))}
           </span>
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (
@@ -304,7 +306,7 @@ export function DraftHeroHeadline({
         {projectPickerEntries.length > 0 ? <MenuSeparator /> : null}
         <MenuItem onClick={openAddProject}>
           <FolderPlusIcon />
-          Add project
+          {t("draft.addAProject")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -314,7 +316,7 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
-      {activeProjectTitle ?? "Add a project"}
+      {activeProjectTitle ?? t("draft.addAProject")}
     </button>
   );
 
@@ -325,10 +327,10 @@ export function DraftHeroHeadline({
   const headingLabel = isScratchDraft
     ? "What should we work on?"
     : hasResolvedProject
-      ? `What should we build in ${activeProjectDisplayName}?`
+      ? `${t("draft.hero.buildInPrefix")}${activeProjectDisplayName ?? ""}${t("draft.hero.buildInSuffix")}`
       : canChooseProject
-        ? `${activeProjectDisplayName ?? "Choose a project"} to start`
-        : "Add a project to start";
+        ? `${activeProjectDisplayName ?? t("draft.chooseProject")}${t("draft.hero.startSuffix")}`
+        : t("draft.hero.addProjectToStart");
 
   // One click out of the project, phrased as the alternative to the question
   // above it. Focus moves to the project picker once this line has gone.
@@ -366,11 +368,18 @@ export function DraftHeroHeadline({
         {isScratchDraft ? (
           <>What should we work on?</>
         ) : hasResolvedProject ? (
-          <>What should we build in {projectSelector}?</>
+          <>
+            {t("draft.hero.buildInPrefix")}
+            {projectSelector}
+            {t("draft.hero.buildInSuffix")}
+          </>
         ) : canChooseProject ? (
-          <>{projectSelector} to start</>
+          <>
+            {projectSelector}
+            {t("draft.hero.startSuffix")}
+          </>
         ) : (
-          <>Add a project to start</>
+          <>{t("draft.hero.addProjectToStart")}</>
         )}
       </h1>
       {/* Reserved whenever threads can skip a project, so the heading does not
