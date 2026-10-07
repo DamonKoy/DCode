@@ -15,6 +15,7 @@ import type {
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import {
   Smartphone,
+  BotIcon,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -130,6 +131,12 @@ interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  /**
+   * Omitted where there is no thread to board (the shared pull-request panel),
+   * which hides the launcher row rather than offering a dead surface.
+   */
+  onAddAgents?: (() => void) | undefined;
+  agentsAvailable?: boolean | undefined;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -158,6 +165,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
+  agents: "Agents are only available from a server thread.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -181,6 +189,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
+  agents: "Available from a server thread.",
 } as const;
 
 type TabContextMenuAction =
@@ -320,6 +329,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddAgents?: (() => void) | undefined;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -327,6 +337,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  agentsAvailable?: boolean | undefined;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
@@ -389,6 +400,19 @@ function RightPanelEmptyState(props: {
       disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
       onClick: props.onAddDevice,
     },
+    ...(props.onAddAgents === undefined
+      ? []
+      : [
+          {
+            label: "Agents",
+            description: "Every subagent this thread delegated to.",
+            icon: BotIcon,
+            shortcut: "A",
+            available: props.agentsAvailable !== false,
+            disabledReason: SURFACE_UNAVAILABLE_HINTS.agents,
+            onClick: props.onAddAgents,
+          },
+        ]),
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -596,6 +620,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "agents":
+      return "Agents";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -679,6 +705,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "agents":
+      return <BotIcon className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -889,6 +917,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: SURFACE_DISABLED_REASONS.device,
       onClick: props.onAddDevice,
     },
+    ...(props.onAddAgents === undefined
+      ? []
+      : [
+          {
+            label: "Agents",
+            icon: BotIcon,
+            shortcut: "A",
+            available: props.agentsAvailable !== false,
+            disabledReason: SURFACE_DISABLED_REASONS.agents,
+            onClick: props.onAddAgents,
+          } as const,
+        ]),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1371,6 +1411,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            onAddAgents={props.onAddAgents}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
@@ -1378,6 +1419,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
+            agentsAvailable={props.agentsAvailable}
           />
         ) : (
           props.children

@@ -278,6 +278,7 @@ import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavaila
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
+import { AgentsBoard } from "./agents/AgentsBoard";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -5267,6 +5268,13 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  // Any server thread can spawn agents; the board states its own empty case
+  // rather than hiding the surface, so the panel is discoverable before the
+  // first delegation.
+  const addAgentsSurface = useCallback(() => {
+    if (!activeThreadRef || !isServerThread) return;
+    useRightPanelStore.getState().open(activeThreadRef, "agents");
+  }, [activeThreadRef, isServerThread]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -10680,6 +10688,8 @@ export default function ChatView(props: ChatViewProps) {
             : undefined
         }
       />
+    ) : renderedRightPanelSurface?.kind === "agents" && activeThreadRef ? (
+      <AgentsBoard threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
     ) : renderedRightPanelSurface?.kind === "device" ? (
@@ -11569,6 +11579,8 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
+          onAddAgents={addAgentsSurface}
+          agentsAvailable={isServerThread}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11624,6 +11636,8 @@ export default function ChatView(props: ChatViewProps) {
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             deviceAvailable={activeThreadRef !== null}
+            onAddAgents={addAgentsSurface}
+            agentsAvailable={isServerThread}
           >
             {rightPanelContent}
           </RightPanelTabs>
