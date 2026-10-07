@@ -2479,6 +2479,155 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  /**
+   * Drives one root turn to completion and hands back the session's permission
+   * handler, which by then has no active turn behind it. That is the state a
+   * provider-native background worker lands in when its owner turn has already
+   * returned end_turn.
+   */
+  const settleTurnThenCapturePermissionHandler = Effect.fnUntraced(function* (input: {
+    readonly instanceId: ProviderInstanceId;
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly runtimeMode: "full-access" | "approval-required";
+  }) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const path = yield* Path.Path;
+    const serverConfig = yield* ServerConfig.ServerConfig;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+    const adapter = makeAcpAdapterV2({
+      crypto: yield* Crypto.Crypto,
+      instanceId: input.instanceId,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        makeRuntime: makeMockRuntime({
+          childProcessSpawner,
+          mockAgentPath,
+          wrapRuntime: (runtime) => ({
+            ...runtime,
+            handleRequestPermission: (handler) =>
+              Effect.sync(() => {
+                requestPermission = handler;
+              }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+          }),
+        }),
+      },
+      fileSystem,
+      idAllocator,
+      serverConfig,
+      selfInvocation,
+    });
+    const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: input.runtimeMode,
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId: input.instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId: input.threadId,
+      providerSessionId: input.providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId: input.threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const turnFiber = yield* runtime
+      .startTurn(
+        makeTurnInput({
+          threadId: input.threadId,
+          providerThread,
+          instanceId: input.instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      )
+      .pipe(Effect.forkScoped);
+    yield* runtime.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runDrain,
+    );
+    // The terminal event is emitted just before the adapter clears its active
+    // turn, so wait for the turn fiber itself rather than racing it.
+    yield* Fiber.join(turnFiber);
+    if (requestPermission === undefined) {
+      return yield* Effect.die("ACP runtime must register a permission handler");
+    }
+    return requestPermission;
+  });
+
+  it.effect("auto-approves a post-settle background worker's permission under full access", () =>
+    Effect.gen(function* () {
+      const requestPermission = yield* settleTurnThenCapturePermissionHandler({
+        instanceId: ProviderInstanceId.make("acp-test-post-settle-permission"),
+        threadId: ThreadId.make("thread-acp-post-settle-permission"),
+        providerSessionId: ProviderSessionId.make("provider-session-acp-post-settle-permission"),
+        runtimeMode: "full-access",
+      });
+      const response = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: {
+            toolCallId: "post-settle-bash",
+            kind: "execute",
+            title: "Bash",
+          },
+          options: [
+            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        },
+        { requestId: "post-settle-permission", method: "session/request_permission" },
+      );
+      assert.equal(response.outcome.outcome, "selected");
+      assert.equal(
+        response.outcome.outcome === "selected" ? response.outcome.optionId : null,
+        "allow-once",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("cancels a post-settle permission that nobody is left to answer", () =>
+    Effect.gen(function* () {
+      const requestPermission = yield* settleTurnThenCapturePermissionHandler({
+        instanceId: ProviderInstanceId.make("acp-test-post-settle-permission-ask"),
+        threadId: ThreadId.make("thread-acp-post-settle-permission-ask"),
+        providerSessionId: ProviderSessionId.make(
+          "provider-session-acp-post-settle-permission-ask",
+        ),
+        runtimeMode: "approval-required",
+      });
+      // Must not fail the request: a rejected transport is what CodeBuddy
+      // reads as "the user declined", which cancels the worker.
+      const response = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: {
+            toolCallId: "post-settle-bash-ask",
+            kind: "execute",
+            title: "Bash",
+          },
+          options: [
+            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+          ],
+        },
+        { requestId: "post-settle-permission-ask", method: "session/request_permission" },
+      );
+      assert.deepEqual(response, { outcome: { outcome: "cancelled" } });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("fails missing native ACP session ids through the typed start-turn error channel", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

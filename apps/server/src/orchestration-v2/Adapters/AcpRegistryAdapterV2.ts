@@ -3,6 +3,7 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
 } from "./DevinAcp.ts";
+import { extractCodeBuddySubagentUpdate } from "./CodeBuddyAcp.ts";
 import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
@@ -207,6 +208,11 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
           extractSubagentUpdate: extractDevinSubagentUpdate,
         }
       : {}),
+    // WorkBuddy/CodeBuddy report delegated workers as plain Agent/TaskOutput
+    // tool calls, so without this their background workers never reach the
+    // subagent roster. The extractor gates on the shape of those two calls, so
+    // it stays inert for every other registry agent.
+    ...(isDevin ? {} : { extractSubagentUpdate: extractCodeBuddySubagentUpdate }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     ...(runtimeCoordinator === undefined
       ? {}

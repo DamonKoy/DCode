@@ -5634,9 +5634,15 @@ export function makeAcpAdapterV2(
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = yield* activeContext;
+                  // A provider-native worker outlives the turn that started it
+                  // and still asks for permission after the root turn returned
+                  // end_turn (WorkBuddy/CodeBuddy multitask workers do exactly
+                  // this). Post-settle work stays under the policy it started
+                  // with; failing the transport here reads to the agent as a
+                  // user rejection, which cancels the worker.
+                  const context = yield* Ref.get(activeTurn);
                   const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
-                    context.input.runtimePolicy,
+                    context?.input.runtimePolicy ?? latestRuntimePolicy,
                     params,
                   );
                   if (disposition === "allow") {
@@ -5657,6 +5663,24 @@ export function makeAcpAdapterV2(
                         optionId === undefined
                           ? ({ outcome: { outcome: "cancelled" } } as const)
                           : ({ outcome: { outcome: "selected", optionId } } as const),
+                    };
+                  }
+                  if (context === null) {
+                    // Nobody is left to answer: the turn that owned this
+                    // session already settled, so there is no approval surface
+                    // to put the request on. Answer the agent explicitly rather
+                    // than failing the request.
+                    yield* Effect.logWarning(
+                      "orchestration-v2.acp-post-settle-permission-unattended",
+                      {
+                        sessionId: params.sessionId,
+                        toolCallId: params.toolCall.toolCallId,
+                        toolCallTitle: params.toolCall.title,
+                      },
+                    );
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
                     };
                   }
                   return {
@@ -5760,9 +5784,10 @@ export function makeAcpAdapterV2(
                 const mcpApprovalDisposition = yield* runRuntimeCallbackAtGeneration(
                   handlerGeneration,
                   Effect.gen(function* () {
-                    const context = yield* activeContext;
+                    // Same post-settle fallback as session/request_permission.
+                    const context = yield* Ref.get(activeTurn);
                     const disposition = acpMcpToolApprovalElicitationDisposition(
-                      context.input.runtimePolicy,
+                      context?.input.runtimePolicy ?? latestRuntimePolicy,
                       params,
                       transportRequestId,
                     );
