@@ -19,16 +19,21 @@ import {
   type RuntimeSubagent,
   type RuntimeSubagentStatus,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { MessageKey } from "@t3tools/shared/i18n";
 
 export const AGENTS_BOARD_COLUMNS = ["working", "waiting", "done", "failed"] as const;
 
 export type AgentsBoardColumnId = (typeof AGENTS_BOARD_COLUMNS)[number];
 
-export const AGENTS_BOARD_COLUMN_LABELS: Readonly<Record<AgentsBoardColumnId, string>> = {
-  working: "Working",
-  waiting: "Waiting on you",
-  done: "Done",
-  failed: "Failed",
+/**
+ * Copy lives in the dictionaries, not here: the fold stays pure and a reader of
+ * either board gets translated lanes through `useI18n`.
+ */
+export const AGENTS_BOARD_COLUMN_LABEL_KEYS: Readonly<Record<AgentsBoardColumnId, MessageKey>> = {
+  working: "agents.column.working",
+  waiting: "agents.column.waiting",
+  done: "agents.column.done",
+  failed: "agents.column.failed",
 };
 
 /**
@@ -36,15 +41,15 @@ export const AGENTS_BOARD_COLUMN_LABELS: Readonly<Record<AgentsBoardColumnId, st
  * "Done" for a whole lane, while a card still has to separate a finished
  * subagent from one that is merely idle and can be resumed.
  */
-export const AGENTS_BOARD_STATUS_LABELS: Readonly<Record<RuntimeSubagentStatus, string>> = {
-  pending: "Queued",
-  running: "Running",
-  waiting: "Waiting",
-  idle: "Idle",
-  completed: "Completed",
-  failed: "Failed",
-  cancelled: "Stopped",
-  interrupted: "Stopped",
+export const AGENTS_BOARD_STATUS_LABEL_KEYS: Readonly<Record<RuntimeSubagentStatus, MessageKey>> = {
+  pending: "agents.status.pending",
+  running: "agents.status.running",
+  waiting: "agents.status.waiting",
+  idle: "agents.status.idle",
+  completed: "agents.status.completed",
+  failed: "agents.status.failed",
+  cancelled: "agents.status.cancelled",
+  interrupted: "agents.status.interrupted",
 };
 
 export interface AgentsBoardRow {
@@ -56,11 +61,19 @@ export interface AgentsBoardRow {
   readonly childThreadId: string | null;
 }
 
-export interface AgentsBoardColumn {
+export interface AgentsBoardColumn<Row = AgentsBoardRow> {
   readonly id: AgentsBoardColumnId;
-  readonly label: string;
-  readonly rows: ReadonlyArray<AgentsBoardRow>;
+  readonly rows: ReadonlyArray<Row>;
 }
+
+/** Any row shape works: the lanes only need a status to file a row under. */
+type StatusBearingRow = { readonly agent: { readonly status: RuntimeSubagentStatus } };
+
+/**
+ * Rows per column for the current render. A lane disappears only when it is
+ * empty; row order is the caller's, so a board can present in-flight work
+ * oldest-first and settled work newest-first.
+ */
 
 /**
  * Idle is neither running nor finished, so it lands in Done and the card's own
@@ -123,44 +136,53 @@ const SHELL_STATUS_TO_SUBAGENT_STATUS: Readonly<Record<string, RuntimeSubagentSt
   rolled_back: "interrupted",
 };
 
-/** A subagent thread with no subagent record in this thread's projection. */
-function rowFromChildThread(thread: OrchestrationV2ThreadShell): AgentsBoardRow {
+/**
+ * The runtime row for a subagent child thread. Threads carry their own run
+ * status, so this covers both a child the projection already knows about and a
+ * provider-native child that only ever appears in the shell snapshot.
+ */
+export function runtimeSubagentFromThread(thread: OrchestrationV2ThreadShell): RuntimeSubagent {
   const updatedAt = DateTime.formatIso(thread.updatedAt);
   const startedAt = thread.activityRunStartedAt ?? thread.latestRunStartedAt ?? null;
   return {
+    id: thread.id,
+    kind: "subagent",
+    title: thread.title,
+    role: null,
+    model: thread.modelSelection.model,
+    effort: null,
+    status: SHELL_STATUS_TO_SUBAGENT_STATUS[thread.status] ?? "idle",
+    activationCount: 1,
+    usage: null,
+    progress: null,
+    lastToolName: null,
+    result: null,
+    error: thread.lastError ?? null,
+    outputFile: null,
+    parentAgentId: null,
+    agentIndex: null,
+    phaseIndex: null,
+    phaseTitle: null,
+    attempt: null,
+    workflowName: null,
+    phases: [],
+    runHandles: null,
+    recentActivity: [],
+    firstSeenAt: startedAt === null ? updatedAt : DateTime.formatIso(startedAt),
+    startedAt: startedAt === null ? null : DateTime.formatIso(startedAt),
+    completedAt:
+      thread.latestRunCompletedAt === null || thread.latestRunCompletedAt === undefined
+        ? null
+        : DateTime.formatIso(thread.latestRunCompletedAt),
+    updatedAt,
+  };
+}
+
+/** A subagent thread with no subagent record in this thread's projection. */
+function rowFromChildThread(thread: OrchestrationV2ThreadShell): AgentsBoardRow {
+  return {
     id: `thread:${thread.id}`,
-    agent: {
-      id: thread.id,
-      kind: "subagent",
-      title: thread.title,
-      role: null,
-      model: thread.modelSelection.model,
-      effort: null,
-      status: SHELL_STATUS_TO_SUBAGENT_STATUS[thread.status] ?? "idle",
-      activationCount: 1,
-      usage: null,
-      progress: null,
-      lastToolName: null,
-      result: null,
-      error: thread.lastError ?? null,
-      outputFile: null,
-      parentAgentId: null,
-      agentIndex: null,
-      phaseIndex: null,
-      phaseTitle: null,
-      attempt: null,
-      workflowName: null,
-      phases: [],
-      runHandles: null,
-      recentActivity: [],
-      firstSeenAt: startedAt === null ? updatedAt : DateTime.formatIso(startedAt),
-      startedAt: startedAt === null ? null : DateTime.formatIso(startedAt),
-      completedAt:
-        thread.latestRunCompletedAt === null || thread.latestRunCompletedAt === undefined
-          ? null
-          : DateTime.formatIso(thread.latestRunCompletedAt),
-      updatedAt,
-    },
+    agent: runtimeSubagentFromThread(thread),
     driver: null,
     providerInstanceId: thread.providerInstanceId,
     childThreadId: thread.id,
@@ -212,16 +234,11 @@ export function buildAgentsBoardRows(input: {
   );
 }
 
-/**
- * Rows per column for the current render, plus the summary counts. A column
- * disappears only when it is empty *and* was never used in this render.
- */
-export function groupAgentsBoardRows(
-  rows: ReadonlyArray<AgentsBoardRow>,
-): ReadonlyArray<AgentsBoardColumn> {
+export function groupAgentsBoardRows<Row extends StatusBearingRow>(
+  rows: ReadonlyArray<Row>,
+): ReadonlyArray<AgentsBoardColumn<Row>> {
   return AGENTS_BOARD_COLUMNS.map((id) => ({
     id,
-    label: AGENTS_BOARD_COLUMN_LABELS[id],
     rows: rows.filter((row) => agentsBoardColumnForStatus(row.agent.status) === id),
   }));
 }
@@ -233,7 +250,7 @@ export interface AgentsBoardSummary {
   readonly failed: number;
 }
 
-export function summarizeAgentsBoard(rows: ReadonlyArray<AgentsBoardRow>): AgentsBoardSummary {
+export function summarizeAgentsBoard(rows: ReadonlyArray<StatusBearingRow>): AgentsBoardSummary {
   let working = 0;
   let waiting = 0;
   let failed = 0;
