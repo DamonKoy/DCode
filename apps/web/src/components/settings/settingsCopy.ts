@@ -208,6 +208,8 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Set on the environment": "在环境上设置",
   "Built-in default": "内置默认值",
   "Reconnect the selected environment to change this setting.": "重新连接所选环境后才能修改这项。",
+  "This connection does not have permission to change environment settings.":
+    "当前连接没有修改环境设置的权限。",
   "Environment-wide setting. Select an environment to change it.":
     "这是环境级设置。请选择一个环境后再修改。",
   "A t3.json exists in this checkout but fails to parse, so every action and icon it declares is ignored. Check the JSON syntax and icon values.":
