@@ -74,7 +74,7 @@ const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repos
 // its project header.
 export const SidebarThreadGroupingMode = Schema.Literals(["sections", "projects"]);
 export type SidebarThreadGroupingMode = typeof SidebarThreadGroupingMode.Type;
-const DEFAULT_SIDEBAR_THREAD_GROUPING_MODE: SidebarThreadGroupingMode = "sections";
+const DEFAULT_SIDEBAR_THREAD_GROUPING_MODE: SidebarThreadGroupingMode = "projects";
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
 export const SidebarThreadPreviewCount = Schema.Int.check(

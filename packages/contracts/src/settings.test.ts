@@ -646,7 +646,7 @@ describe("ClientSettings sidebar", () => {
   });
 
   it("defaults the thread grouping mode to the lifecycle sections", () => {
-    expect(decodeClientSettings({}).sidebarThreadGroupingMode).toBe("sections");
+    expect(decodeClientSettings({}).sidebarThreadGroupingMode).toBe("projects");
   });
 
   it("round-trips an explicit project grouping mode", () => {
