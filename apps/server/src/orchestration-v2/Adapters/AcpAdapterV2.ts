@@ -350,11 +350,17 @@ export interface AcpAdapterV2Flavor {
    * Older builds may never hydrate via get_command_or_subagent_output, so this
    * remains a terminal fallback. Current Grok additionally emits structured
    * `subagent_finished` session notifications.
+   *
+   * `childSessionId` may also carry the worker's native task id when the agent
+   * runs workers inside the root session (CodeBuddy `<task-notification>` names
+   * `agent-<uuid>`); lookups try the child session first, then the task id.
    */
   readonly extractSubagentEndNotice?: (text: string) =>
     | {
         readonly childSessionId: string;
-        readonly status: "completed" | "failed";
+        readonly status: "completed" | "failed" | "cancelled";
+        /** The worker's own end summary, when the notice carries one. */
+        readonly result?: string | null;
       }
     | undefined;
   /**
@@ -2014,6 +2020,12 @@ export function makeAcpAdapterV2(
         // signals can still flip the original turn items instead of leaving
         // them running forever.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Post-settle tool frames arrive one field at a time (the poll's input
+        // on the first update, its output on the last) with no active turn to
+        // merge them into, so carryover matching keeps its own merged view.
+        const postSettleToolCalls = yield* Ref.make<ReadonlyMap<string, AcpToolCallState>>(
+          new Map(),
+        );
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -4238,7 +4250,20 @@ export function makeAcpAdapterV2(
             ) {
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
-                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const incoming = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const toolCall = yield* Ref.modify(postSettleToolCalls, (current) => {
+                  const merged = mergeToolCallState(current.get(incoming.toolCallId), incoming);
+                  const next = new Map(current);
+                  next.delete(incoming.toolCallId);
+                  next.set(incoming.toolCallId, merged);
+                  // Bounded: only the latest few calls can still be completing.
+                  while (next.size > 64) {
+                    const oldest = next.keys().next().value;
+                    if (oldest === undefined) break;
+                    next.delete(oldest);
+                  }
+                  return [merged, next] as const;
+                });
                 const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
                 if (subagentUpdate === undefined) continue;
                 if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
@@ -4278,7 +4303,7 @@ export function makeAcpAdapterV2(
                 (yield* updateCarryoverSubagentStatus(
                   notice.childSessionId,
                   notice.status,
-                  undefined,
+                  notice.result ?? undefined,
                   {
                     project: projectCarryover,
                   },
@@ -4688,7 +4713,8 @@ export function makeAcpAdapterV2(
                 const notice = flavor.extractSubagentEndNotice(update.content.text);
                 const subagent =
                   notice !== undefined
-                    ? context.subagentsBySessionId.get(notice.childSessionId)
+                    ? (context.subagentsBySessionId.get(notice.childSessionId) ??
+                      context.subagents.get(notice.childSessionId))
                     : undefined;
                 if (
                   notice !== undefined &&
@@ -4704,8 +4730,8 @@ export function makeAcpAdapterV2(
                     title: subagent.task.title,
                     model: subagent.task.model,
                     status: notice.status,
-                    childSessionId: notice.childSessionId,
-                    result: null,
+                    childSessionId: subagent.childSessionId,
+                    result: notice.result ?? null,
                     suppressNormalTool: true,
                   });
                 }
@@ -5362,7 +5388,9 @@ export function makeAcpAdapterV2(
           ) {
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
-              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const incoming = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const toolCall = mergeToolCallState(context.tools.get(incoming.toolCallId), incoming);
+              context.tools.set(incoming.toolCallId, toolCall);
               const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
               if (
                 subagentUpdate === undefined ||
@@ -5400,7 +5428,8 @@ export function makeAcpAdapterV2(
             const subagent =
               notice === undefined
                 ? undefined
-                : context.subagentsBySessionId.get(notice.childSessionId);
+                : (context.subagentsBySessionId.get(notice.childSessionId) ??
+                  context.subagents.get(notice.childSessionId));
             if (notice !== undefined && subagent !== undefined) {
               return yield* applyTerminal(subagent, {
                 nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
@@ -5408,8 +5437,8 @@ export function makeAcpAdapterV2(
                 title: subagent.task.title,
                 model: subagent.task.model,
                 status: notice.status,
-                childSessionId: notice.childSessionId,
-                result: null,
+                childSessionId: subagent.childSessionId,
+                result: notice.result ?? null,
                 suppressNormalTool: true,
               });
             }
@@ -5444,6 +5473,7 @@ export function makeAcpAdapterV2(
          */
         const terminalizeCarryoverSubagents = Effect.fnUntraced(function* (
           carryover: AcpCarryoverSubagents | null,
+          openStatus: "interrupted" | "cancelled" = "interrupted",
         ) {
           if (carryover === null) return;
           for (const subagent of carryover.subagents) {
@@ -5457,7 +5487,7 @@ export function makeAcpAdapterV2(
               }
               continue;
             }
-            yield* projectCarryoverSubagentStatus(subagent, "interrupted");
+            yield* projectCarryoverSubagentStatus(subagent, openStatus);
           }
         });
 
@@ -6962,6 +6992,7 @@ export function makeAcpAdapterV2(
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+            yield* Ref.set(postSettleToolCalls, new Map());
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
@@ -7300,6 +7331,25 @@ export function makeAcpAdapterV2(
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
+            // Workers still running when the session goes away will never
+            // report again: the agent that owned them is gone. Close them as
+            // cancelled so neither the worker row, its Agent tool call nor its
+            // child thread stays running forever.
+            const leftoverCarryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            if (
+              leftoverCarryover !== null &&
+              leftoverCarryover.subagents.some(
+                (subagent) => !acpSubagentStatusIsTerminal(subagent.task.status),
+              )
+            ) {
+              yield* Effect.logInfo("orchestration-v2.acp-session-end-closes-carryover", {
+                driver,
+                providerSessionId: input.providerSessionId,
+              });
+              yield* terminalizeCarryoverSubagents(leftoverCarryover, "cancelled").pipe(
+                Effect.ignore,
+              );
+            }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,

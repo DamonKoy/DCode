@@ -3,7 +3,10 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
 } from "./DevinAcp.ts";
-import { extractCodeBuddySubagentUpdate } from "./CodeBuddyAcp.ts";
+import {
+  extractCodeBuddySubagentEndNotice,
+  extractCodeBuddySubagentUpdate,
+} from "./CodeBuddyAcp.ts";
 import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
@@ -212,7 +215,15 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     // tool calls, so without this their background workers never reach the
     // subagent roster. The extractor gates on the shape of those two calls, so
     // it stays inert for every other registry agent.
-    ...(isDevin ? {} : { extractSubagentUpdate: extractCodeBuddySubagentUpdate }),
+    // A finished worker is announced by an injected `<task-notification>` user
+    // message, often after the root turn already settled; that notice is the
+    // only end signal when the agent never polls the worker again.
+    ...(isDevin
+      ? {}
+      : {
+          extractSubagentUpdate: extractCodeBuddySubagentUpdate,
+          extractSubagentEndNotice: extractCodeBuddySubagentEndNotice,
+        }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     ...(runtimeCoordinator === undefined
       ? {}

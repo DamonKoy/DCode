@@ -175,3 +175,23 @@ export function parseCodeBuddyTaskNotification(
     summary: summary === undefined || summary.length === 0 ? null : summary,
   };
 }
+
+/**
+ * The adapter's end-notice shape for a CodeBuddy worker: the notification names
+ * the worker by its native task id, which is how the roster keys it.
+ */
+export function extractCodeBuddySubagentEndNotice(text: string):
+  | {
+      readonly childSessionId: string;
+      readonly status: "completed" | "cancelled" | "failed";
+      readonly result: string | null;
+    }
+  | undefined {
+  const notification = parseCodeBuddyTaskNotification(text);
+  if (notification === undefined) return undefined;
+  return {
+    childSessionId: notification.nativeTaskId,
+    status: notification.status,
+    result: notification.summary,
+  };
+}
