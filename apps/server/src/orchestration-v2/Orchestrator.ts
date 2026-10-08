@@ -2450,6 +2450,45 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
     }
+    // Moving a thread to another project re-parents its workspace: the old
+    // branch, worktree, and live provider session do not exist under the new
+    // project's workspace root. The session is detached below; a run in flight
+    // would be stranded by that detach, so refuse to move until it lands. A
+    // subagent reports to a parent in its own project and must not move itself.
+    if (
+      command.type === "thread.metadata.update" &&
+      command.projectId !== undefined &&
+      command.projectId !== thread.projectId
+    ) {
+      if (thread.archivedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is archived and cannot move to another project.`,
+        });
+      }
+      if (thread.lineage.relationshipToParent === "subagent") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is a subagent and cannot move to another project.`,
+        });
+      }
+      const moveRecords = yield* projectionStore
+        .getThreadRecords(command.threadId, ["runs"])
+        .pipe(mapDispatchError(command));
+      if (
+        moveRecords.runs.some((run) =>
+          ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} has active work and cannot move to another project.`,
+        });
+      }
+    }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -2893,6 +2932,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
+            // A project move invalidates the previous workspace's branch and
+            // worktree, which only exist under the old project's root. Callers
+            // may still pin replacements in the same command; otherwise the
+            // thread starts fresh in the target project.
+            ...(command.projectId === undefined || command.projectId === thread.projectId
+              ? {}
+              : {
+                  projectId: command.projectId,
+                  branch: command.branch ?? null,
+                  worktreePath: command.worktreePath ?? null,
+                }),
             ...(command.linkedPullRequest === undefined
               ? {}
               : {
@@ -3276,8 +3326,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.type === "thread.archive" || command.type === "thread.settle"
         ? (providerContext?.providerSessions ?? []).map((session) => session.id)
         : command.type === "thread.metadata.update" &&
-            command.worktreePath !== undefined &&
-            command.worktreePath !== thread.worktreePath
+            ((command.worktreePath !== undefined && command.worktreePath !== thread.worktreePath) ||
+              (command.projectId !== undefined && command.projectId !== thread.projectId))
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
           : command.type === "thread.runtime-mode.set"
             ? (providerContext?.providerSessions ?? [])

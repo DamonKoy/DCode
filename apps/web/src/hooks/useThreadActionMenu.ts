@@ -7,7 +7,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { ProjectId, type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
@@ -93,6 +93,7 @@ export function useThreadActionMenu(input: {
     archiveThread,
     deleteThread,
     markThreadUnread,
+    moveThreadToProject,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -141,9 +142,22 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        // Only projects on the thread's own environment can host it; the
+        // current project is where it already lives.
+        const moveCandidates = projects
+          .filter(
+            (project) =>
+              project.environmentId === thread.environmentId && project.id !== thread.projectId,
+          )
+          .map((project) => ({ id: project.id, label: project.title }));
+        const moveToProject =
+          moveCandidates.length === 0
+            ? null
+            : { projects: moveCandidates, disabled: !threadRuntimeCanArchive(thread.runtime) };
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
           projectFilter: null,
+          moveToProject,
           isPinned: thread.pinnedAt != null,
           isSettled: supports.settlement && thread.settledOverride === "settled",
           autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -166,6 +180,14 @@ export function useThreadActionMenu(input: {
           const result = await snoozeThread(threadRef, preset.snoozedUntil);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+          }
+          return;
+        }
+        if (action.startsWith("move-to-project:")) {
+          const targetProjectId = ProjectId.make(action.slice("move-to-project:".length));
+          const result = await moveThreadToProject(threadRef, targetProjectId);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            failureToast("Failed to move thread", squashAtomCommandFailure(result));
           }
           return;
         }
@@ -335,6 +357,7 @@ export function useThreadActionMenu(input: {
       handleNewThread,
       logicalProjectKeyByPhysicalKey,
       markThreadUnread,
+      moveThreadToProject,
       onStartRename,
       pinThread,
       projectCwd,

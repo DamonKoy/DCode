@@ -7,7 +7,7 @@ import {
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ProjectId, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -287,6 +287,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
@@ -607,6 +610,104 @@ export function useThreadActions() {
       sidebarThreadSortOrder,
       stopThreadSession,
     ],
+  );
+
+  const moveThreadToProject = useCallback(
+    async (target: ScopedThreadRef, targetProjectId: ProjectId) => {
+      const resolved = resolveThreadTarget(target);
+      if (!resolved) {
+        return AsyncResult.success(undefined);
+      }
+      const { thread } = resolved;
+      if (thread.projectId === targetProjectId) {
+        return AsyncResult.success(undefined);
+      }
+
+      // A branch and worktree live under the current project's root, so a move
+      // re-parents the thread and discards them. A worktree uniquely owned by
+      // this thread is removed here — with confirmation, since that deletes
+      // uncommitted changes — before the server forgets the path. A shared
+      // worktree belongs to another thread and is left alone.
+      const orphanedWorktreePath = getOrphanedWorktreePathForThread(readThreadShells(), thread.id);
+      const threadProject = readProject({
+        environmentId: target.environmentId,
+        projectId: thread.projectId,
+      });
+      const environmentConfig = appAtomRegistry
+        .get(environmentServerConfigsAtom)
+        .get(target.environmentId);
+      const canRemoveWorktree =
+        orphanedWorktreePath !== null &&
+        threadProject !== null &&
+        !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot);
+      const localApi = readLocalApi();
+      if (canRemoveWorktree && localApi) {
+        const confirmationResult = await settlePromise(() =>
+          localApi.dialogs.confirm(
+            [
+              `Move thread "${thread.title}" to another project?`,
+              "",
+              "Its worktree is removed, and any uncommitted changes in it are lost:",
+              formatWorktreePathForDisplay(orphanedWorktreePath) ?? orphanedWorktreePath,
+            ].join("\n"),
+            { variant: "destructive" },
+          ),
+        );
+        if (confirmationResult._tag === "Failure") {
+          return confirmationResult;
+        }
+        if (!confirmationResult.value) {
+          return AsyncResult.success(undefined);
+        }
+      }
+
+      const result = await updateThreadMetadata({
+        environmentId: target.environmentId,
+        input: { threadId: target.threadId, projectId: targetProjectId },
+      });
+      if (result._tag === "Failure") {
+        return result;
+      }
+
+      if (canRemoveWorktree && orphanedWorktreePath !== null && threadProject !== null) {
+        const removeResult = await removeWorktree({
+          environmentId: target.environmentId,
+          input: { cwd: threadProject.workspaceRoot, path: orphanedWorktreePath, force: true },
+        });
+        if (removeResult._tag === "Success") {
+          await refreshVcsStatus({
+            environmentId: target.environmentId,
+            input: { cwd: threadProject.workspaceRoot },
+          });
+        } else {
+          // The thread already moved. Cleanup has its own toast; reporting the
+          // removal failure would make callers read it as a failed move.
+          const displayPath =
+            formatWorktreePathForDisplay(orphanedWorktreePath) ?? orphanedWorktreePath;
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Thread moved, but its worktree was not removed",
+              description: `Could not remove ${displayPath}.`,
+            }),
+          );
+        }
+      }
+
+      const targetProject = readProject({
+        environmentId: target.environmentId,
+        projectId: targetProjectId,
+      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: "Thread moved",
+          ...(targetProject === null ? {} : { description: `Now in ${targetProject.title}.` }),
+        }),
+      );
+      return result;
+    },
+    [refreshVcsStatus, removeWorktree, resolveThreadTarget, updateThreadMetadata],
   );
 
   const unsettleThread = useCallback(
@@ -974,6 +1075,7 @@ export function useThreadActions() {
       reorderActiveThread,
       markThreadUnread,
       setThreadAutoSettle,
+      moveThreadToProject,
     }),
     [
       archiveThread,
@@ -981,6 +1083,7 @@ export function useThreadActions() {
       confirmAndUnpinThread,
       deleteThread,
       markThreadUnread,
+      moveThreadToProject,
       pinThread,
       reorderPinnedThread,
       reorderActiveThread,
