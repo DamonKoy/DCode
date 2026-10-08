@@ -4251,11 +4251,15 @@ export function makeAcpAdapterV2(
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
                 const incoming = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                // Keyed per session: a child session may reuse the root's
+                // tool call id for its own frames, which must not inherit the
+                // root's dispatch input.
+                const postSettleKey = `${notification.sessionId}\u0000${incoming.toolCallId}`;
                 const toolCall = yield* Ref.modify(postSettleToolCalls, (current) => {
-                  const merged = mergeToolCallState(current.get(incoming.toolCallId), incoming);
+                  const merged = mergeToolCallState(current.get(postSettleKey), incoming);
                   const next = new Map(current);
-                  next.delete(incoming.toolCallId);
-                  next.set(incoming.toolCallId, merged);
+                  next.delete(postSettleKey);
+                  next.set(postSettleKey, merged);
                   // Bounded: only the latest few calls can still be completing.
                   while (next.size > 64) {
                     const oldest = next.keys().next().value;

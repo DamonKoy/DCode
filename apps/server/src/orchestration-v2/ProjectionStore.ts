@@ -1587,10 +1587,11 @@ function providerChildNodeStatus(
  * only place its lifecycle lands. Latest start wins if a child was re-rooted.
  */
 export function providerChildRootNode(
-  nodes: ReadonlyArray<OrchestrationV2ExecutionNode>,
+  // Wire projections can omit the node graph entirely.
+  nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined,
 ): OrchestrationV2ExecutionNode | null {
   let latest: OrchestrationV2ExecutionNode | null = null;
-  for (const node of nodes) {
+  for (const node of nodes ?? []) {
     if (node.kind !== "root_turn" || node.runId !== null) continue;
     if (
       latest === null ||
