@@ -54,6 +54,7 @@ import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEn
 import { readOpenCodeUsage } from "./opencodeUsageReader.ts";
 import { readAntigravityUsage } from "./antigravityUsageReader.ts";
 import { readCursorAccountUsage } from "./cursorUsageReader.ts";
+import { orchestrationDatabasePath, readT3ProviderTurnUsage } from "./t3ProviderTurnUsageReader.ts";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -677,6 +678,21 @@ export const make = Effect.gen(function* () {
         files: !exists && !failed ? null : antigravity.files.filter((file) => file.root === dir),
         status: failed ? "partial" : "ok",
         ...(failed ? { message: "Some Antigravity history could not be read." } : {}),
+      });
+    }
+    // Providers the transcript scan does not read (Pi, every ACP registry
+    // agent) report only through DCode's own persisted per-turn usage.
+    const t3Usage = yield* Effect.promise(() =>
+      readT3ProviderTurnUsage(orchestrationDatabasePath(config.stateDir), windowStartMs),
+    );
+    for (const source of t3Usage.sources) {
+      scanned.push({
+        provider: source.provider,
+        dir: source.dir,
+        volumeId: "",
+        files: [{ path: source.dir, records: source.records }],
+        status: t3Usage.error ? "partial" : "ok",
+        ...(t3Usage.error ? { message: "Some persisted provider usage could not be read." } : {}),
       });
     }
     const cursorUserHome =

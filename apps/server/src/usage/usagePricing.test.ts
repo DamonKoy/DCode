@@ -214,7 +214,10 @@ describe("usage pricing", () => {
       expect(lookupRate(table, "deepinfra/anthropic/claude-fable-5")?.cacheReadCostPerToken).toBe(
         1e-5,
       );
-      expect(lookupRate(table, "other/claude-fable-5")).toBeNull();
+      // An unmatched provider prefix falls back to the canonical entry.
+      expect(lookupRate(table, "other/claude-fable-5")).toEqual(
+        lookupRate(table, "claude-fable-5"),
+      );
     }
   });
 
@@ -224,7 +227,9 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "claude-fable-5-1[1m]")).toEqual(
       lookupRate(table, "claude-fable-5-1"),
     );
-    expect(lookupRate(table, "anthropic/Claude-Fable-5-1[1m]")).toBeNull();
+    expect(lookupRate(table, "anthropic/Claude-Fable-5-1[1m]")).toEqual(
+      lookupRate(table, "claude-fable-5-1"),
+    );
   });
 
   it("adds a bare alias when every qualified entry has the same rate", () => {
@@ -247,5 +252,99 @@ describe("usage pricing", () => {
     expect(lookupRate(table, "provider-a/example-model")?.inputCostPerToken).toBe(1);
     expect(lookupRate(table, "provider-b/example-model")?.inputCostPerToken).toBe(3);
     expect(lookupRate(table, "example-model")).toBeNull();
+  });
+
+  it("drops a provider prefix to reach the model's canonical entry", () => {
+    const table = parseRateTable({
+      "deepseek-v4-flash": rate(3e-7, 6e-9),
+      "deepseek/deepseek-v4-flash": rate(5e-7),
+    });
+
+    expect(lookupRate(table, "custom-local/DeepSeek-V4-Flash")).toEqual(
+      lookupRate(table, "deepseek-v4-flash"),
+    );
+    // A provider-qualified entry that exists stays exact, ahead of the fallback.
+    expect(lookupRate(table, "deepseek/deepseek-v4-flash")?.inputCostPerToken).toBe(5e-7);
+  });
+
+  it("prices an unknown provider prefix at the canonical model's rate", () => {
+    const table = parseRateTable({ "example-model": rate(1) });
+
+    expect(lookupRate(table, "some-gateway/example-model")).toEqual(
+      lookupRate(table, "example-model"),
+    );
+    // A genuinely unknown model still stays unpriced.
+    expect(lookupRate(table, "some-gateway/unknown-model")).toBeNull();
+  });
+
+  it("strips quantization and date suffixes down to the base model", () => {
+    const table = parseRateTable({ "deepseek-v4-flash": rate(3e-7, 6e-9) });
+    const canonical = lookupRate(table, "deepseek-v4-flash");
+
+    expect(lookupRate(table, "DeepSeek-V4-Flash-0731-UD-IQ3_S")).toEqual(canonical);
+    expect(lookupRate(table, "deepseek-v4-flash-0731")).toEqual(canonical);
+    expect(lookupRate(table, "deepseek-v4-flash-gptq-int4")).toEqual(canonical);
+    expect(lookupRate(table, "deepseek-v4-flash-awq")).toEqual(canonical);
+    expect(lookupRate(table, "deepseek-v4-flash-q4_k_m")).toEqual(canonical);
+  });
+
+  it("does not strip a size or context tail that is not a date or quantization tag", () => {
+    const table = parseRateTable({ "example-model": rate(1) });
+
+    expect(lookupRate(table, "example-model-122b")).toBeNull();
+    expect(lookupRate(table, "example-model-a10b")).toBeNull();
+    expect(lookupRate(table, "example-model-200k")).toBeNull();
+  });
+
+  it("maps known domestic provider aliases to the rate table's segment", () => {
+    const table = parseRateTable({
+      "moonshot/kimi-k2.5": rate(6e-7),
+      "zai/glm-5.2": rate(1.4e-6),
+    });
+
+    expect(lookupRate(table, "moonshotai/Kimi-K2.5")).toEqual(
+      lookupRate(table, "moonshot/kimi-k2.5"),
+    );
+    expect(lookupRate(table, "zai-org/GLM-5.2")).toEqual(lookupRate(table, "zai/glm-5.2"));
+    expect(lookupRate(table, "z-ai/glm-5.2")).toEqual(lookupRate(table, "zai/glm-5.2"));
+  });
+
+  it("keeps an ambiguous model unpriced even when a suffix is stripped", () => {
+    const table = parseRateTable({
+      "provider-a/qwen3.5-122b-a10b": rate(2.6e-7),
+      "provider-b/qwen3.5-122b-a10b": rate(4e-7),
+    });
+
+    expect(lookupRate(table, "provider-a/qwen3.5-122b-a10b")?.inputCostPerToken).toBe(2.6e-7);
+    expect(lookupRate(table, "provider-b/qwen3.5-122b-a10b")?.inputCostPerToken).toBe(4e-7);
+    // The bare name conflicts, so dropping the quantization tag cannot price it.
+    expect(lookupRate(table, "Qwen/Qwen3.5-122B-A10B-GPTQ-Int4")).toBeNull();
+  });
+
+  it("prefers an exact key over a normalized fallback", () => {
+    const table = parseRateTable({
+      "example-model-int4": rate(5),
+      "example-model": rate(1),
+    });
+
+    expect(lookupRate(table, "example-model-int4")?.inputCostPerToken).toBe(5);
+    expect(lookupRate(table, "example-model-q4_k_m")?.inputCostPerToken).toBe(1);
+  });
+
+  it("keeps a user override ahead of every normalized fallback", () => {
+    const table = parseRateTable({ "deepseek-v4-flash": rate(3e-7) });
+    const overrides = createOverrideRateTable({
+      "custom-local/deepseek-v4-flash": {
+        inputCostPerMillionTokens: 1,
+        outputCostPerMillionTokens: 4,
+      },
+    });
+
+    // The override is keyed on the full custom id, so it beats the canonical
+    // public rate that the prefix fallback would otherwise reach.
+    expect(priceUsage(table, record("custom-local/deepseek-v4-flash"), overrides)).toMatchObject({
+      costUsd: 7,
+      costSource: "modelPriced",
+    });
   });
 });

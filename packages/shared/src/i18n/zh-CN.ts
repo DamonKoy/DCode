@@ -87,6 +87,8 @@ export const zhCNMessages: Partial<Record<MessageKey, string>> = {
   "agents.page.idle": "没有正在运行的任务",
   "agents.page.unknownProject": "未知项目",
   "agents.page.showMore": "再显示 {count} 个",
+  "agents.page.filter.all": "全部项目",
+  "agents.page.filter.label": "按项目筛选",
   "draft.hero.buildInPrefix": "我们可以在 ",
   "draft.hero.buildInSuffix": " 中构建什么？",
   "draft.hero.startSuffix": " 以开始",

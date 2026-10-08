@@ -220,6 +220,110 @@ function stripVariantSuffix(key: string): string {
 }
 
 /**
+ * One trailing token describing how a model's weights were quantized rather
+ * than which model they are: `-GPTQ`, `-Int4`, `-AWQ`, `-FP8`, `-Q4_K_M`,
+ * `-IQ3_S`, or Unsloth's `-UD`. Compound tails are peeled token by token, so
+ * `-UD-IQ3_S` comes off in two steps.
+ *
+ * Names are already lowercased before this runs.
+ */
+const QUANTIZATION_TOKEN =
+  /^(?:ud|unsloth|dynamic|gptq|awq|gguf|ggml|exl2|mlx|bnb|bitsandbytes|nf4|fp8|fp16|bf16|fp32|int[248]|q[2-8](?:_[a-z0-9]+)*|iq[1-4](?:_[a-z0-9]+)*|[2-8]bit)$/;
+
+function stripQuantizationSuffix(key: string): string {
+  const parts = key.split("-");
+  let end = parts.length;
+  while (end > 1 && QUANTIZATION_TOKEN.test(parts[end - 1]!)) end--;
+  return parts.slice(0, end).join("-");
+}
+
+/** A plausible `MMDD` (4), `YYMMDD` (6), or `YYYYMMDD` (8) date snapshot tag. */
+function isCompactDate(token: string): boolean {
+  const monthDay = (month: number, day: number) =>
+    month >= 1 && month <= 12 && day >= 1 && day <= 31;
+  if (/^(?:19|20)\d{6}$/.test(token)) {
+    return monthDay(Number(token.slice(4, 6)), Number(token.slice(6, 8)));
+  }
+  if (/^\d{6}$/.test(token)) {
+    return monthDay(Number(token.slice(2, 4)), Number(token.slice(4, 6)));
+  }
+  if (/^\d{4}$/.test(token)) {
+    return monthDay(Number(token.slice(0, 2)), Number(token.slice(2, 4)));
+  }
+  return false;
+}
+
+/**
+ * Drops a trailing snapshot date such as `deepseek-v4-flash-0731` or
+ * `claude-3-5-sonnet-20241022`. Only plausible calendar values are peeled, so
+ * a context or size tail like `-122b` survives.
+ */
+function stripDateSuffix(key: string): string {
+  const hyphenated = /-(?:19|20)\d{2}-\d{2}-\d{2}$/.exec(key);
+  if (hyphenated !== null) return key.slice(0, key.length - hyphenated[0].length);
+  const parts = key.split("-");
+  if (parts.length > 1 && isCompactDate(parts[parts.length - 1]!)) {
+    return parts.slice(0, -1).join("-");
+  }
+  return key;
+}
+
+/** `deepseek_v3` and `deepseek-v3` are the same model, spelled differently. */
+function normalizeSeparators(key: string): string {
+  return key.includes("_") ? key.replaceAll("_", "-") : key;
+}
+
+/**
+ * Provider path segments that name the same vendor under a different
+ * spelling, mapped to the segment the rate table uses. Applied only to the
+ * leading segment; the price still comes from the table entry we land on.
+ * `moonshotai` is Moonshot AI's HuggingFace org name, `zai-org`/`z-ai` are
+ * Z.ai's across gateways.
+ */
+const PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  moonshotai: "moonshot",
+  "zai-org": "zai",
+  "z-ai": "zai",
+};
+
+function aliasProviderSegment(key: string): string {
+  const slash = key.indexOf("/");
+  const head = slash === -1 ? key : key.slice(0, slash);
+  const alias = PROVIDER_ALIASES[head];
+  return alias === undefined ? key : `${alias}${key.slice(head.length)}`;
+}
+
+/**
+ * Rate-table keys to try for a normalized model name, most specific first:
+ * the name itself, then with a provider segment aliased, then separators
+ * normalized, each also tried with its provider prefix dropped (bare name).
+ * A bare name that is genuinely ambiguous never appears in the table, so it
+ * simply misses and the lookup stays unpriced.
+ */
+function candidateKeys(base: string): readonly string[] {
+  const stages = [base];
+  const noQuantization = stripQuantizationSuffix(base);
+  if (noQuantization !== base) stages.push(noQuantization);
+  const last = stages[stages.length - 1]!;
+  const noDate = stripDateSuffix(last);
+  if (noDate !== last) stages.push(noDate);
+
+  const seen = new Set<string>();
+  const candidates: string[] = [];
+  const add = (key: string): void => {
+    if (key.length === 0 || seen.has(key)) return;
+    seen.add(key);
+    candidates.push(key);
+  };
+  for (const stage of stages) {
+    const forms = [stage, aliasProviderSegment(stage), normalizeSeparators(stage)];
+    for (const form of forms) add(form);
+    for (const form of forms) add(bareModelName(form));
+  }
+  return candidates;
+}
+
+/**
  * Models we never price, regardless of the table.
  *
  * `<synthetic>` marks locally generated messages that were never billed. Bare
@@ -259,7 +363,11 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
   if (bareName.length === 0 || UNPRICEABLE_MODELS.has(bareName)) return null;
-  return table.get(key) ?? null;
+  for (const candidate of candidateKeys(key)) {
+    const rate = table.get(candidate);
+    if (rate !== undefined) return rate;
+  }
+  return null;
 }
 
 /** The parts of a transcript record that decide its price. */

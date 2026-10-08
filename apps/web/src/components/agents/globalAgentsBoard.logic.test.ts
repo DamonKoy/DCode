@@ -5,6 +5,7 @@ import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import { AGENTS_BOARD_STATUS_LABEL_KEYS, groupAgentsBoardRows } from "./agentsBoard.logic.ts";
 import {
   buildGlobalAgentRows,
+  filterGlobalAgentRows,
   globalAgentEnvironmentIds,
   orderGlobalAgentRows,
   type GlobalAgentRow,
@@ -205,5 +206,31 @@ describe("provider-native child threads", () => {
       projects,
     });
     expect(rows[0]?.agent.status).toBe("running");
+  });
+});
+
+describe("filterGlobalAgentRows", () => {
+  const rows = buildGlobalAgentRows({
+    threads: [
+      thread({ id: "agent-1" }),
+      thread({ id: "agent-2", projectId: "project-2" }),
+      thread({ id: "agent-3", environmentId: "env-2" }),
+    ],
+    projects,
+  });
+
+  it("keeps every row when nothing is selected", () => {
+    expect(filterGlobalAgentRows(rows, null)).toHaveLength(3);
+    expect(filterGlobalAgentRows(rows, "")).toHaveLength(3);
+  });
+
+  it("narrows to one project within its environment", () => {
+    const filtered = filterGlobalAgentRows(rows, "env-1:project-2");
+    expect(filtered.map((row) => row.threadId)).toEqual(["agent-2"]);
+  });
+
+  it("does not let two servers share a project key", () => {
+    const filtered = filterGlobalAgentRows(rows, "env-1:project-1");
+    expect(filtered.map((row) => row.threadId)).toEqual(["agent-1"]);
   });
 });
