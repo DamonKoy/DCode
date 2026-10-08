@@ -39,6 +39,8 @@ const emitMcpToolApprovalElicitation =
 const emitUrlElicitation = process.env.T3_ACP_EMIT_URL_ELICITATION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
+/** Provider-side refusal with no visible answer (CodeBuddy's refusal shape). */
+const refusePrompt = process.env.T3_ACP_REFUSE_PROMPT === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
@@ -1515,6 +1517,14 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep("25 millis");
         yield* agent.client.sessionUpdate(update);
         return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
+      if (refusePrompt) {
+        // A refusal that produced no answer: the turn must surface the reason
+        // instead of looking like an empty successful reply.
+        return yield* finishPrompt(requestedSessionId, "refusal", {
+          error: "502 Socket is closed (proxy: http://user:secret@10.0.0.1:7897)",
+        });
       }
 
       if (emitXAiPromptCompleteThenHang) {
