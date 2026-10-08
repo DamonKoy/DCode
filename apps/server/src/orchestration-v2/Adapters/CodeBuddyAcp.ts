@@ -134,3 +134,64 @@ export function extractCodeBuddySubagentUpdate(
     result: status === "completed" ? (output ?? null) : null,
   };
 }
+
+export interface CodeBuddyTaskNotification {
+  readonly nativeTaskId: string;
+  readonly status: "completed" | "cancelled" | "failed";
+  readonly summary: string | null;
+}
+
+const TASK_NOTIFICATION_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "cancelled",
+  "failed",
+]);
+
+const TASK_NOTIFICATION_TASK_ID = /<task-id>\s*([^<\s][^<]*?)\s*<\/task-id>/u;
+const TASK_NOTIFICATION_STATUS = /<status>\s*([a-z_]+)\s*<\/status>/u;
+const TASK_NOTIFICATION_SUMMARY = /<summary>\s*([\s\S]*?)\s*<\/summary>/u;
+
+/**
+ * CodeBuddy reports a finished worker by injecting a `<task-notification>` user
+ * message into the owning session after the root turn already returned
+ * end_turn. That message is the only signal that a detached worker is gone, so
+ * it has to parse into the same terminal state the tool calls use.
+ */
+export function parseCodeBuddyTaskNotification(
+  text: string,
+): CodeBuddyTaskNotification | undefined {
+  if (!text.includes("<task-notification>")) return undefined;
+  const nativeTaskId = TASK_NOTIFICATION_TASK_ID.exec(text)?.[1];
+  const status = TASK_NOTIFICATION_STATUS.exec(text)?.[1]?.toLowerCase();
+  if (nativeTaskId === undefined || status === undefined) return undefined;
+  // Non-worker task ids belong to other task kinds and have their own paths.
+  if (!nativeTaskId.startsWith("agent-") || !TASK_NOTIFICATION_STATUSES.has(status)) {
+    return undefined;
+  }
+  const summary = TASK_NOTIFICATION_SUMMARY.exec(text)?.[1]?.trim();
+  return {
+    nativeTaskId,
+    status: status as CodeBuddyTaskNotification["status"],
+    summary: summary === undefined || summary.length === 0 ? null : summary,
+  };
+}
+
+/**
+ * The adapter's end-notice shape for a CodeBuddy worker: the notification names
+ * the worker by its native task id, which is how the roster keys it.
+ */
+export function extractCodeBuddySubagentEndNotice(text: string):
+  | {
+      readonly childSessionId: string;
+      readonly status: "completed" | "cancelled" | "failed";
+      readonly result: string | null;
+    }
+  | undefined {
+  const notification = parseCodeBuddyTaskNotification(text);
+  if (notification === undefined) return undefined;
+  return {
+    childSessionId: notification.nativeTaskId,
+    status: notification.status,
+    result: notification.summary,
+  };
+}

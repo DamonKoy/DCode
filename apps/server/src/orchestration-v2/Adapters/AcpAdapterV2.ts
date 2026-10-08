@@ -350,11 +350,17 @@ export interface AcpAdapterV2Flavor {
    * Older builds may never hydrate via get_command_or_subagent_output, so this
    * remains a terminal fallback. Current Grok additionally emits structured
    * `subagent_finished` session notifications.
+   *
+   * `childSessionId` may also carry the worker's native task id when the agent
+   * runs workers inside the root session (CodeBuddy `<task-notification>` names
+   * `agent-<uuid>`); lookups try the child session first, then the task id.
    */
   readonly extractSubagentEndNotice?: (text: string) =>
     | {
         readonly childSessionId: string;
-        readonly status: "completed" | "failed";
+        readonly status: "completed" | "failed" | "cancelled";
+        /** The worker's own end summary, when the notice carries one. */
+        readonly result?: string | null;
       }
     | undefined;
   /**
@@ -1203,6 +1209,8 @@ interface ActiveAcpTurn {
   interrupted: boolean;
   finalized: boolean;
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  /** Whether any assistant text reached the transcript in this turn. */
+  assistantVisible: boolean;
   /** session/prompt already returned; finalize deferred for background work. */
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
@@ -1433,6 +1441,42 @@ type AcpCarryoverSubagents = {
   readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
 };
 
+/** Longest refusal reason worth showing; providers append whole environments. */
+const REFUSAL_FAILURE_DETAIL_MAX_LENGTH = 300;
+
+/**
+ * A refusal that produced nothing visible is a failed turn, not an empty
+ * answer: the reader has to be told why. Returns null for every other stop
+ * reason and for a refusal that still answered (some providers refuse a
+ * follow-up while leaving usable text behind).
+ */
+function refusalFailure(
+  result: { readonly stopReason?: string; readonly _meta?: unknown },
+  context: ActiveAcpTurn,
+): OrchestrationV2ProviderFailure | null {
+  if (result.stopReason !== "refusal") return null;
+  if (context.assistantVisible) return null;
+  const meta = unknownRecord(result._meta);
+  const candidates = [
+    meta?.["error"],
+    meta?.["message"],
+    meta?.["detail"],
+    meta?.["statusMessage"],
+  ];
+  const raw = candidates.find(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
+  // "502 Socket is closed (proxy: http://user:token@host:port)" — the marker
+  // and everything after it is transport environment, not a reason.
+  const detail = (raw ?? "").split(" (proxy:")[0]?.trim() ?? "";
+  const message =
+    detail.length === 0 ? "The model refused the request (stopReason: refusal)." : detail;
+  return makeProviderFailure({
+    class: "provider_error",
+    message: message.slice(0, REFUSAL_FAILURE_DETAIL_MAX_LENGTH),
+  });
+}
+
 type PendingRuntimeRequest = {
   readonly generation: number;
   readonly nativeResponseAcknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>;
@@ -1656,6 +1700,13 @@ export function makeAcpAdapterV2(
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        /**
+         * The turn that just finalized. Provider-native workers keep running
+         * after their owner turn returned end_turn and still ask for
+         * permission, so an approval has to be attached to something the
+         * thread can show; the settled turn is the only run still on screen.
+         */
+        const lastFinalizedTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
@@ -1969,6 +2020,12 @@ export function makeAcpAdapterV2(
         // signals can still flip the original turn items instead of leaving
         // them running forever.
         const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        // Post-settle tool frames arrive one field at a time (the poll's input
+        // on the first update, its output on the last) with no active turn to
+        // merge them into, so carryover matching keeps its own merged view.
+        const postSettleToolCalls = yield* Ref.make<ReadonlyMap<string, AcpToolCallState>>(
+          new Map(),
+        );
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -4193,7 +4250,24 @@ export function makeAcpAdapterV2(
             ) {
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
-                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const incoming = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                // Keyed per session: a child session may reuse the root's
+                // tool call id for its own frames, which must not inherit the
+                // root's dispatch input.
+                const postSettleKey = `${notification.sessionId}\u0000${incoming.toolCallId}`;
+                const toolCall = yield* Ref.modify(postSettleToolCalls, (current) => {
+                  const merged = mergeToolCallState(current.get(postSettleKey), incoming);
+                  const next = new Map(current);
+                  next.delete(postSettleKey);
+                  next.set(postSettleKey, merged);
+                  // Bounded: only the latest few calls can still be completing.
+                  while (next.size > 64) {
+                    const oldest = next.keys().next().value;
+                    if (oldest === undefined) break;
+                    next.delete(oldest);
+                  }
+                  return [merged, next] as const;
+                });
                 const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
                 if (subagentUpdate === undefined) continue;
                 if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
@@ -4233,7 +4307,7 @@ export function makeAcpAdapterV2(
                 (yield* updateCarryoverSubagentStatus(
                   notice.childSessionId,
                   notice.status,
-                  undefined,
+                  notice.result ?? undefined,
                   {
                     project: projectCarryover,
                   },
@@ -4524,6 +4598,7 @@ export function makeAcpAdapterV2(
                   context.earlyInjectedReportObserved = true;
                 }
                 yield* appendText(context, "assistant", text, update.messageId);
+                if (text.trim().length > 0) context.assistantVisible = true;
               }
               break;
             }
@@ -4642,7 +4717,8 @@ export function makeAcpAdapterV2(
                 const notice = flavor.extractSubagentEndNotice(update.content.text);
                 const subagent =
                   notice !== undefined
-                    ? context.subagentsBySessionId.get(notice.childSessionId)
+                    ? (context.subagentsBySessionId.get(notice.childSessionId) ??
+                      context.subagents.get(notice.childSessionId))
                     : undefined;
                 if (
                   notice !== undefined &&
@@ -4658,8 +4734,8 @@ export function makeAcpAdapterV2(
                     title: subagent.task.title,
                     model: subagent.task.model,
                     status: notice.status,
-                    childSessionId: notice.childSessionId,
-                    result: null,
+                    childSessionId: subagent.childSessionId,
+                    result: notice.result ?? null,
                     suppressNormalTool: true,
                   });
                 }
@@ -5316,7 +5392,9 @@ export function makeAcpAdapterV2(
           ) {
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
-              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const incoming = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const toolCall = mergeToolCallState(context.tools.get(incoming.toolCallId), incoming);
+              context.tools.set(incoming.toolCallId, toolCall);
               const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
               if (
                 subagentUpdate === undefined ||
@@ -5354,7 +5432,8 @@ export function makeAcpAdapterV2(
             const subagent =
               notice === undefined
                 ? undefined
-                : context.subagentsBySessionId.get(notice.childSessionId);
+                : (context.subagentsBySessionId.get(notice.childSessionId) ??
+                  context.subagents.get(notice.childSessionId));
             if (notice !== undefined && subagent !== undefined) {
               return yield* applyTerminal(subagent, {
                 nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
@@ -5362,8 +5441,8 @@ export function makeAcpAdapterV2(
                 title: subagent.task.title,
                 model: subagent.task.model,
                 status: notice.status,
-                childSessionId: notice.childSessionId,
-                result: null,
+                childSessionId: subagent.childSessionId,
+                result: notice.result ?? null,
                 suppressNormalTool: true,
               });
             }
@@ -5398,6 +5477,7 @@ export function makeAcpAdapterV2(
          */
         const terminalizeCarryoverSubagents = Effect.fnUntraced(function* (
           carryover: AcpCarryoverSubagents | null,
+          openStatus: "interrupted" | "cancelled" = "interrupted",
         ) {
           if (carryover === null) return;
           for (const subagent of carryover.subagents) {
@@ -5411,7 +5491,7 @@ export function makeAcpAdapterV2(
               }
               continue;
             }
-            yield* projectCarryoverSubagentStatus(subagent, "interrupted");
+            yield* projectCarryoverSubagentStatus(subagent, openStatus);
           }
         });
 
@@ -5637,10 +5717,11 @@ export function makeAcpAdapterV2(
                   // A provider-native worker outlives the turn that started it
                   // and still asks for permission after the root turn returned
                   // end_turn (WorkBuddy/CodeBuddy multitask workers do exactly
-                  // this). Post-settle work stays under the policy it started
-                  // with; failing the transport here reads to the agent as a
-                  // user rejection, which cancels the worker.
-                  const context = yield* Ref.get(activeTurn);
+                  // this). Such a request falls back to the turn that just
+                  // settled: its policy governs the work it started, and it
+                  // gives the approval a run the thread can still show.
+                  const context =
+                    (yield* Ref.get(activeTurn)) ?? (yield* Ref.get(lastFinalizedTurn));
                   const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
                     params,
@@ -5666,10 +5747,10 @@ export function makeAcpAdapterV2(
                     };
                   }
                   if (context === null) {
-                    // Nobody is left to answer: the turn that owned this
-                    // session already settled, so there is no approval surface
-                    // to put the request on. Answer the agent explicitly rather
-                    // than failing the request.
+                    // No turn has ever run in this session, so there is no run
+                    // to hang an approval on. Answer the agent explicitly rather
+                    // than failing the request, which it would read as a user
+                    // rejection and act on.
                     yield* Effect.logWarning(
                       "orchestration-v2.acp-post-settle-permission-unattended",
                       {
@@ -5682,6 +5763,21 @@ export function makeAcpAdapterV2(
                       _tag: "Immediate" as const,
                       response: { outcome: { outcome: "cancelled" } } as const,
                     };
+                  }
+                  if ((yield* Ref.get(activeTurn)) === null) {
+                    // A worker asked after its owner turn settled. Keep the
+                    // request open on the settled run so the user can decide:
+                    // auto-approving here would hand a background worker
+                    // permissions nobody granted.
+                    yield* Effect.logWarning(
+                      "orchestration-v2.acp-post-settle-permission-pending",
+                      {
+                        sessionId: params.sessionId,
+                        toolCallId: params.toolCall.toolCallId,
+                        toolCallTitle: params.toolCall.title,
+                        providerTurnId: context.providerTurnId,
+                      },
+                    );
                   }
                   return {
                     _tag: "Pending" as const,
@@ -6682,6 +6778,7 @@ export function makeAcpAdapterV2(
               });
             }
           }
+          yield* Ref.set(lastFinalizedTurn, context);
           yield* Ref.set(activeTurn, null);
           // A mid-turn background completion may have deferred its offer while
           // this root turn was still streaming. Once the turn leaves the active
@@ -6899,6 +6996,7 @@ export function makeAcpAdapterV2(
             });
             yield* Ref.set(suppressPostSettleMonitorPrompt, false);
             yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+            yield* Ref.set(postSettleToolCalls, new Map());
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
@@ -6991,6 +7089,7 @@ export function makeAcpAdapterV2(
               interrupted: false,
               finalized: false,
               finalizedStatus: null,
+              assistantVisible: false,
               promptSettled: false,
               promptSettledStatus: null,
               promptWireSettled,
@@ -7144,12 +7243,15 @@ export function makeAcpAdapterV2(
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    const refusal = refusalFailure(result, context);
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted
                           ? "interrupted"
                           : "cancelled"
-                        : "completed";
+                        : refusal === null
+                          ? "completed"
+                          : "failed";
                     // Grok monitors (and async subagents) keep working after the root
                     // prompt RPC returns. Defer finalize so their later updates and
                     // wake-turn traffic still project onto this run.
@@ -7168,7 +7270,7 @@ export function makeAcpAdapterV2(
                       );
                       return;
                     }
-                    yield* finalizeTurn(context, status);
+                    yield* finalizeTurn(context, status, refusal ?? undefined);
                   }),
                 ).pipe(Effect.asVoid),
               ),
@@ -7233,6 +7335,25 @@ export function makeAcpAdapterV2(
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
+            // Workers still running when the session goes away will never
+            // report again: the agent that owned them is gone. Close them as
+            // cancelled so neither the worker row, its Agent tool call nor its
+            // child thread stays running forever.
+            const leftoverCarryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            if (
+              leftoverCarryover !== null &&
+              leftoverCarryover.subagents.some(
+                (subagent) => !acpSubagentStatusIsTerminal(subagent.task.status),
+              )
+            ) {
+              yield* Effect.logInfo("orchestration-v2.acp-session-end-closes-carryover", {
+                driver,
+                providerSessionId: input.providerSessionId,
+              });
+              yield* terminalizeCarryoverSubagents(leftoverCarryover, "cancelled").pipe(
+                Effect.ignore,
+              );
+            }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,

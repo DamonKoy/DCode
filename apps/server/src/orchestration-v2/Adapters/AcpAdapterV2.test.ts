@@ -3,6 +3,10 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
 } from "./DevinAcp.ts";
+import {
+  extractCodeBuddySubagentEndNotice,
+  extractCodeBuddySubagentUpdate,
+} from "./CodeBuddyAcp.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -2542,6 +2546,13 @@ describe("AcpAdapterV2", () => {
       modelSelection,
       runtimePolicy,
     });
+    // One consumer only: the adapter's stream is not replayable, so the turn
+    // terminal has to be read off this same buffered queue.
+    const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) => Queue.offer(events, event)),
+      Effect.forkScoped,
+    );
     const turnFiber = yield* runtime
       .startTurn(
         makeTurnInput({
@@ -2553,27 +2564,29 @@ describe("AcpAdapterV2", () => {
         }),
       )
       .pipe(Effect.forkScoped);
-    yield* runtime.events.pipe(
-      Stream.takeUntil((event) => event.type === "turn.terminal"),
-      Stream.runDrain,
-    );
+    yield* Effect.gen(function* () {
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (event.type === "turn.terminal") return;
+      }
+    });
     // The terminal event is emitted just before the adapter clears its active
     // turn, so wait for the turn fiber itself rather than racing it.
     yield* Fiber.join(turnFiber);
     if (requestPermission === undefined) {
       return yield* Effect.die("ACP runtime must register a permission handler");
     }
-    return requestPermission;
+    return { requestPermission, runtime, events };
   });
 
   it.effect("auto-approves a post-settle background worker's permission under full access", () =>
     Effect.gen(function* () {
-      const requestPermission = yield* settleTurnThenCapturePermissionHandler({
+      const requestPermission = (yield* settleTurnThenCapturePermissionHandler({
         instanceId: ProviderInstanceId.make("acp-test-post-settle-permission"),
         threadId: ThreadId.make("thread-acp-post-settle-permission"),
         providerSessionId: ProviderSessionId.make("provider-session-acp-post-settle-permission"),
         runtimeMode: "full-access",
-      });
+      })).requestPermission;
       const response = yield* requestPermission(
         {
           sessionId: "mock-session-1",
@@ -2597,36 +2610,266 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("cancels a post-settle permission that nobody is left to answer", () =>
+  it.effect("fails a refused turn and shows the provider's reason without its environment", () =>
     Effect.gen(function* () {
-      const requestPermission = yield* settleTurnThenCapturePermissionHandler({
-        instanceId: ProviderInstanceId.make("acp-test-post-settle-permission-ask"),
-        threadId: ThreadId.make("thread-acp-post-settle-permission-ask"),
-        providerSessionId: ProviderSessionId.make(
-          "provider-session-acp-post-settle-permission-ask",
-        ),
-        runtimeMode: "approval-required",
-      });
-      // Must not fail the request: a rejected transport is what CodeBuddy
-      // reads as "the user declined", which cancels the worker.
-      const response = yield* requestPermission(
-        {
-          sessionId: "mock-session-1",
-          toolCall: {
-            toolCallId: "post-settle-bash-ask",
-            kind: "execute",
-            title: "Bash",
-          },
-          options: [
-            { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
-            { optionId: "reject-once", name: "Reject", kind: "reject_once" },
-          ],
-        },
-        { requestId: "post-settle-permission-ask", method: "session/request_permission" },
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
-      assert.deepEqual(response, { outcome: { outcome: "cancelled" } });
+      const instanceId = ProviderInstanceId.make("acp-test-refusal");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { T3_ACP_REFUSE_PROMPT: "1" },
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-refusal");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-refusal"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const terminal = Option.getOrThrow(
+        yield* runtime.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+        ),
+      );
+
+      assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "failed");
+      const message = terminal.type === "turn.terminal" ? (terminal.failure?.message ?? "") : "";
+      assert.match(message, /502 Socket is closed/u);
+      assert.notMatch(message, /proxy:/u);
+      assert.notMatch(message, /user:secret/u);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  describe("CodeBuddy background workers after the root turn settles", () => {
+    const workerId = "agent-0f1e2d3c-4b5a-4968-8776-655443322110";
+    const openCodeBuddySession = Effect.fnUntraced(function* (input: {
+      readonly name: string;
+      readonly flow: "notification" | "taskoutput" | "permission";
+      readonly runtimeMode: "full-access" | "approval-required";
+      readonly environment?: Record<string, string>;
+    }) {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make(`acp-test-codebuddy-${input.name}`);
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          extractSubagentUpdate: extractCodeBuddySubagentUpdate,
+          extractSubagentEndNotice: extractCodeBuddySubagentEndNotice,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: {
+              T3_ACP_EMIT_CODEBUDDY_WORKER_FLOW: input.flow,
+              ...input.environment,
+            },
+          }),
+        },
+        fileSystem,
+        idAllocator,
+        serverConfig,
+        selfInvocation,
+      });
+      const threadId = ThreadId.make(`thread-acp-codebuddy-${input.name}`);
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: input.runtimeMode,
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make(`provider-session-acp-codebuddy-${input.name}`),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      return { runtime, events, threadId };
+    });
+
+    const takeUntil = Effect.fnUntraced(function* (
+      events: Queue.Queue<ProviderAdapterV2Event>,
+      seen: Array<ProviderAdapterV2Event>,
+      predicate: (event: ProviderAdapterV2Event) => boolean,
+    ) {
+      while (true) {
+        const event = yield* Queue.take(events);
+        seen.push(event);
+        if (predicate(event)) return event;
+      }
+    });
+
+    const isWorkerTerminal = (event: ProviderAdapterV2Event) =>
+      event.type === "subagent.updated" &&
+      event.subagent.nativeTaskRef?.nativeId === workerId &&
+      event.subagent.status !== "running" &&
+      event.subagent.status !== "pending";
+
+    it.effect("closes a worker from the injected task-notification alone", () =>
+      Effect.gen(function* () {
+        const { events } = yield* openCodeBuddySession({
+          name: "notification",
+          flow: "notification",
+          runtimeMode: "full-access",
+        });
+        const seen: Array<ProviderAdapterV2Event> = [];
+        const terminal = yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
+        assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "completed");
+        const running = seen.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === workerId
+            ? [event.subagent.status]
+            : [],
+        );
+        assert.equal(running.at(-1), "running");
+
+        const closed = yield* takeUntil(events, seen, isWorkerTerminal);
+        assert.equal(
+          closed.type === "subagent.updated" ? closed.subagent.status : null,
+          "completed",
+        );
+        assert.equal(
+          closed.type === "subagent.updated" ? closed.subagent.result : null,
+          "There are 42 files.",
+        );
+        assert.isNotNull(closed.type === "subagent.updated" ? closed.subagent.completedAt : null);
+        const nodes = seen.flatMap((event) => (event.type === "node.updated" ? [event.node] : []));
+        const childRoot = nodes.filter((node) => node.kind === "root_turn").at(-1);
+        assert.equal(childRoot?.status, "completed");
+        assert.isNotNull(childRoot?.completedAt ?? null);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("closes a worker from a post-settle TaskOutput poll", () =>
+      Effect.gen(function* () {
+        const { events } = yield* openCodeBuddySession({
+          name: "taskoutput",
+          flow: "taskoutput",
+          runtimeMode: "full-access",
+        });
+        const seen: Array<ProviderAdapterV2Event> = [];
+        yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
+        const closed = yield* takeUntil(events, seen, isWorkerTerminal);
+        assert.equal(
+          closed.type === "subagent.updated" ? closed.subagent.status : null,
+          "completed",
+        );
+        assert.match(
+          closed.type === "subagent.updated" ? (closed.subagent.result ?? "") : "",
+          /42 files/u,
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("keeps a worker's post-settle permission request pending until it is answered", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const logDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "acp-codebuddy-permission-",
+        });
+        const logPath = `${logDirectory}/outcome.json`;
+        const { runtime, events } = yield* openCodeBuddySession({
+          name: "permission",
+          flow: "permission",
+          runtimeMode: "approval-required",
+          environment: { T3_ACP_CODEBUDDY_PERMISSION_LOG_PATH: logPath },
+        });
+        const seen: Array<ProviderAdapterV2Event> = [];
+        yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
+        const pending = yield* takeUntil(
+          events,
+          seen,
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+        );
+        if (pending.type !== "runtime_request.updated") {
+          return yield* Effect.die("Expected a pending post-settle approval");
+        }
+        // Nothing answered it for the user: it stays open, not cancelled.
+        assert.isFalse(yield* fileSystem.exists(logPath));
+        yield* runtime.respondToRuntimeRequest({
+          requestId: pending.runtimeRequest.id,
+          decision: "decline",
+        });
+        const closed = yield* takeUntil(events, seen, isWorkerTerminal);
+        assert.equal(
+          closed.type === "subagent.updated" ? closed.subagent.status : null,
+          "completed",
+        );
+        const outcome = yield* fileSystem.readFileString(logPath);
+        assert.match(outcome, /"selected"/u);
+        assert.match(outcome, /"reject"/u);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+  });
 
   it.effect("fails missing native ACP session ids through the typed start-turn error channel", () =>
     Effect.gen(function* () {

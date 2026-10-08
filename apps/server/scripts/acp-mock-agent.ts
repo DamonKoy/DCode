@@ -27,6 +27,14 @@ const emitV2Fidelity = process.env.T3_ACP_EMIT_V2_FIDELITY === "1";
 const vibeRetryOutcome = process.env.T3_ACP_VIBE_RETRY_OUTCOME;
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitPostSettleMonitorFlow = process.env.T3_ACP_EMIT_POST_SETTLE_MONITOR_FLOW === "1";
+/**
+ * CodeBuddy multitask shape: an `Agent` dispatch that detaches a background
+ * worker, then (after the prompt settled) the worker's end. "notification"
+ * ends it with an injected `<task-notification>` only, "taskoutput" with a
+ * `TaskOutput` poll, and "permission" first asks for a post-settle permission.
+ */
+const codeBuddyWorkerFlow = process.env.T3_ACP_EMIT_CODEBUDDY_WORKER_FLOW;
+const codeBuddyPermissionLogPath = process.env.T3_ACP_CODEBUDDY_PERMISSION_LOG_PATH;
 const emitInTurnTaskOutputThenLateDuplicate =
   process.env.T3_ACP_EMIT_IN_TURN_TASKOUTPUT_THEN_LATE_DUPLICATE === "1";
 const injectedReportTriggerPath = process.env.T3_ACP_INJECTED_REPORT_TRIGGER_PATH;
@@ -39,6 +47,8 @@ const emitMcpToolApprovalElicitation =
 const emitUrlElicitation = process.env.T3_ACP_EMIT_URL_ELICITATION === "1";
 const emitXAiAskUserQuestion = process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION === "1";
 const emitXAiExitPlanMode = process.env.T3_ACP_EMIT_XAI_EXIT_PLAN_MODE === "1";
+/** Provider-side refusal with no visible answer (CodeBuddy's refusal shape). */
+const refusePrompt = process.env.T3_ACP_REFUSE_PROMPT === "1";
 const emitXAiPlanMdWrite = process.env.T3_ACP_EMIT_XAI_PLAN_MD_WRITE === "1";
 const emitXAiPromptCompleteThenHang = process.env.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1";
 const emitXAiRateLimitThenHang = process.env.T3_ACP_EMIT_XAI_RATE_LIMIT_THEN_HANG === "1";
@@ -1517,6 +1527,14 @@ const program = Effect.gen(function* () {
         return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
+      if (refusePrompt) {
+        // A refusal that produced no answer: the turn must surface the reason
+        // instead of looking like an empty successful reply.
+        return yield* finishPrompt(requestedSessionId, "refusal", {
+          error: "502 Socket is closed (proxy: http://user:secret@10.0.0.1:7897)",
+        });
+      }
+
       if (emitXAiPromptCompleteThenHang) {
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
@@ -2026,6 +2044,108 @@ const program = Effect.gen(function* () {
                 kind: "other",
                 status: "completed",
                 rawOutput: { output: "MONITOR_LISTING_TOKEN_LATE" },
+              },
+            });
+          });
+        }).pipe(Effect.forkDetach);
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
+
+      if (codeBuddyWorkerFlow !== undefined) {
+        const workerId = "agent-0f1e2d3c-4b5a-4968-8776-655443322110";
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-agent-dispatch-1",
+            title: "Agent",
+            kind: "other",
+            status: "pending",
+            rawInput: {
+              subagent_type: "Explore",
+              description: "Count files",
+              prompt: "Count the files in the repo.",
+              run_in_background: true,
+            },
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call-agent-dispatch-1",
+            status: "completed",
+            rawOutput: { type: "text", text: `Async agent launched.\nagent_id: ${workerId}` },
+          },
+        });
+        // ACP v2 has no separate `tool_call` start frame: the first
+        // tool_call_update carries the call's title and input.
+        yield* Effect.gen(function* () {
+          yield* Effect.sleep("150 millis");
+          if (codeBuddyWorkerFlow === "permission") {
+            const outcome = yield* agent.client
+              .requestPermission({
+                sessionId: requestedSessionId,
+                title: "ls -la",
+                subject: {
+                  type: "tool_call",
+                  toolCall: {
+                    toolCallId: "call-worker-bash-1",
+                    title: "ls -la",
+                    kind: "execute",
+                    status: "pending",
+                    rawInput: { command: "ls -la" },
+                  },
+                },
+                options: [
+                  { optionId: "allow", name: "Allow", kind: "allow_once" },
+                  { optionId: "reject", name: "Reject", kind: "reject_once" },
+                ],
+              })
+              .pipe(
+                Effect.map((response) => JSON.stringify(response.outcome)),
+                Effect.catch((cause) => Effect.succeed(`error:${String(cause)}`)),
+              );
+            if (codeBuddyPermissionLogPath !== undefined) {
+              yield* Effect.sync(() => NodeFS.writeFileSync(codeBuddyPermissionLogPath, outcome));
+            }
+          }
+          yield* Effect.sync(() => {
+            if (codeBuddyWorkerFlow === "taskoutput") {
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "call-task-output-1",
+                  title: "TaskOutput",
+                  kind: "other",
+                  status: "pending",
+                  rawInput: { block: false, task_id: workerId },
+                },
+              });
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "call-task-output-1",
+                  status: "completed",
+                  rawOutput: {
+                    type: "text",
+                    text: `Task ID: ${workerId}\nStatus: completed\n\nResponse:\nThere are 42 files.`,
+                  },
+                },
+              });
+              return;
+            }
+            writeJsonRpcNotification("session/update", {
+              sessionId: requestedSessionId,
+              update: {
+                sessionUpdate: "user_message_chunk",
+                messageId: "mock-task-notification",
+                content: {
+                  type: "text",
+                  text: `<task-notification>\n<task-id>${workerId}</task-id>\n<kind>agent</kind>\n<status>completed</status>\n<summary>There are 42 files.</summary>\n</task-notification>`,
+                },
               },
             });
           });

@@ -925,6 +925,8 @@ type ShellThreadRow = {
   readonly has_actionable_proposed_plan: number;
   readonly item_count: number;
   readonly runless_item_count: number;
+  readonly provider_child_status: string | null;
+  readonly provider_child_completed_at: string | null;
 };
 
 type ShellRunRow = {
@@ -1380,6 +1382,8 @@ export function threadShellFromProjection(
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
     );
   const latestUserMessage = userMessages[0] ?? null;
+  const providerChildRoot =
+    (latestRun ?? null) === null ? providerChildRootNode(projection.nodes) : null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({
     latestRun,
     providerThreads: projection.providerThreads,
@@ -1425,6 +1429,8 @@ export function threadShellFromProjection(
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
     status: latestRun?.status ?? "idle",
+    providerChildStatus: providerChildRoot?.status ?? null,
+    providerChildCompletedAt: providerChildRoot?.completedAt ?? null,
     ...threadErrorSummary(
       latestRootProviderFailure(latestRun, projection.turnItems),
       providerSession?.lastError ?? null,
@@ -1534,6 +1540,8 @@ type ShellThreadState = {
   readonly activeRunId: RunId | null;
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly activityRunStartedAt: DateTime.Utc | null;
+  readonly providerChildStatus: OrchestrationV2ExecutionNode["status"] | null;
+  readonly providerChildCompletedAt: DateTime.Utc | null;
   readonly lastError: string | null;
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
@@ -1550,6 +1558,51 @@ type ShellThreadState = {
   readonly runOrdinalById: ReadonlyMap<RunId, number>;
   readonly itemCountByRunId: ReadonlyMap<RunId, number>;
 };
+
+const PROVIDER_CHILD_NODE_STATUSES: ReadonlySet<string> = new Set<
+  OrchestrationV2ExecutionNode["status"]
+>([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+
+function providerChildNodeStatus(
+  status: string | null,
+): OrchestrationV2ExecutionNode["status"] | null {
+  return status !== null && PROVIDER_CHILD_NODE_STATUSES.has(status)
+    ? (status as OrchestrationV2ExecutionNode["status"])
+    : null;
+}
+
+/**
+ * The runless root turn of a provider-native child thread: the provider spawned
+ * the worker itself, so the thread never owns an app run and this node is the
+ * only place its lifecycle lands. Latest start wins if a child was re-rooted.
+ */
+export function providerChildRootNode(
+  // Wire projections can omit the node graph entirely.
+  nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined,
+): OrchestrationV2ExecutionNode | null {
+  let latest: OrchestrationV2ExecutionNode | null = null;
+  for (const node of nodes ?? []) {
+    if (node.kind !== "root_turn" || node.runId !== null) continue;
+    if (
+      latest === null ||
+      (node.startedAt === null ? 0 : DateTime.toEpochMillis(node.startedAt)) >=
+        (latest.startedAt === null ? 0 : DateTime.toEpochMillis(latest.startedAt))
+    ) {
+      latest = node;
+    }
+  }
+  return latest;
+}
 
 function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
   switch (status) {
@@ -1692,6 +1745,8 @@ function shellFromState(input: {
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
+    providerChildStatus: input.state.providerChildStatus,
+    providerChildCompletedAt: input.state.providerChildCompletedAt,
     lastError: input.state.lastError,
     lastErrorClass: input.state.lastErrorClass,
     usageLimitResetAt: input.state.usageLimitResetAt,
@@ -5009,6 +5064,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 LIMIT 1
               ) AS pending_secret_request_payload_json,
               (
+                -- A provider-native child owns no run; its runless root turn
+                -- is the only status it has.
+                SELECT node.status
+                FROM orchestration_v2_projection_nodes node
+                WHERE presented.run_id IS NULL
+                  AND node.thread_id = t.thread_id
+                  AND node.run_id IS NULL
+                  AND node.kind = 'root_turn'
+                ORDER BY node.started_at DESC, node.node_id DESC
+                LIMIT 1
+              ) AS provider_child_status,
+              (
+                SELECT node.completed_at
+                FROM orchestration_v2_projection_nodes node
+                WHERE presented.run_id IS NULL
+                  AND node.thread_id = t.thread_id
+                  AND node.run_id IS NULL
+                  AND node.kind = 'root_turn'
+                ORDER BY node.started_at DESC, node.node_id DESC
+                LIMIT 1
+              ) AS provider_child_completed_at,
+              (
                 SELECT message.updated_at
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id
@@ -5481,6 +5558,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? null
               : DateTime.makeUnsafe(row.latest_user_authored_message_at),
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
+          providerChildStatus: providerChildNodeStatus(row.provider_child_status),
+          providerChildCompletedAt:
+            row.provider_child_completed_at === null
+              ? null
+              : DateTime.makeUnsafe(row.provider_child_completed_at),
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({
             threadId: thread.id,

@@ -1864,6 +1864,15 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
   status: OrchestrationV2ShellThreadStatus,
+  /**
+   * A provider-native child thread (a worker the provider spawned itself) owns
+   * no app run, so `status` stays idle for its whole life. This carries the
+   * status of the child's own runless root turn instead, so boards can tell a
+   * running worker from a finished one. Null when the thread owns runs; absent
+   * on servers that predate it.
+   */
+  providerChildStatus: Schema.optional(Schema.NullOr(OrchestrationV2ExecutionNode.fields.status)),
+  providerChildCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
