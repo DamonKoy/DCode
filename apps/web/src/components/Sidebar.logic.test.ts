@@ -45,6 +45,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   shouldShowSidebarV2Duration,
   shouldRecedeSidebarThread,
+  resolveSidebarProjectAttention,
   sliceSidebarProjectThreads,
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
@@ -1999,18 +2000,66 @@ describe("buildSidebarProjectSections", () => {
 });
 
 describe("sliceSidebarProjectThreads", () => {
+  const noRoute = () => false;
+
   it("keeps every thread when the project fits in one page", () => {
-    expect(sliceSidebarProjectThreads(["a", "b", "c"], 5)).toEqual({
-      visible: ["a", "b", "c"],
-      hiddenCount: 0,
-    });
+    expect(
+      sliceSidebarProjectThreads(["a", "b", "c"], {
+        visibleCount: 5,
+        expanded: true,
+        isRouteThread: noRoute,
+      }),
+    ).toEqual({ visible: ["a", "b", "c"], hiddenCount: 0 });
   });
 
   it("keeps the leading page and reports what is left", () => {
-    expect(sliceSidebarProjectThreads(["a", "b", "c", "d"], 2)).toEqual({
-      visible: ["a", "b"],
-      hiddenCount: 2,
-    });
+    expect(
+      sliceSidebarProjectThreads(["a", "b", "c", "d"], {
+        visibleCount: 2,
+        expanded: true,
+        isRouteThread: noRoute,
+      }),
+    ).toEqual({ visible: ["a", "b"], hiddenCount: 2 });
+  });
+
+  it("pulls the open thread past the page into view instead of hiding it", () => {
+    expect(
+      sliceSidebarProjectThreads(["a", "b", "c", "d"], {
+        visibleCount: 2,
+        expanded: true,
+        isRouteThread: (thread) => thread === "d",
+      }),
+    ).toEqual({ visible: ["a", "b", "d"], hiddenCount: 1 });
+  });
+
+  it("shows only the open thread under a collapsed project", () => {
+    expect(
+      sliceSidebarProjectThreads(["a", "b", "c"], {
+        visibleCount: 5,
+        expanded: false,
+        isRouteThread: (thread) => thread === "b",
+      }),
+    ).toEqual({ visible: ["b"], hiddenCount: 0 });
+    expect(
+      sliceSidebarProjectThreads(["a", "b", "c"], {
+        visibleCount: 5,
+        expanded: false,
+        isRouteThread: noRoute,
+      }),
+    ).toEqual({ visible: [], hiddenCount: 0 });
+  });
+});
+
+describe("resolveSidebarProjectAttention", () => {
+  it("surfaces the most urgent live state", () => {
+    expect(resolveSidebarProjectAttention(["ready", "working", "input"])).toBe("input");
+    expect(resolveSidebarProjectAttention(["input", "approval", "working"])).toBe("approval");
+    expect(resolveSidebarProjectAttention(["waiting", "working"])).toBe("working");
+  });
+
+  it("lights nothing when no thread is live or waiting on the user", () => {
+    expect(resolveSidebarProjectAttention(["ready", "failed", "waiting", "limited"])).toBeNull();
+    expect(resolveSidebarProjectAttention([])).toBeNull();
   });
 });
 
