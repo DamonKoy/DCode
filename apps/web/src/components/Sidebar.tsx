@@ -52,6 +52,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import {
+  ProjectId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
@@ -2415,6 +2416,7 @@ export default function Sidebar() {
     markThreadUnread,
     archiveThread,
     deleteThread,
+    moveThreadToProject,
   } = useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
@@ -4637,6 +4639,18 @@ export default function Sidebar() {
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        // Only projects on the thread's own environment can host it; the
+        // current project is where it already lives.
+        const moveCandidates = projects
+          .filter(
+            (project) =>
+              project.environmentId === thread.environmentId && project.id !== thread.projectId,
+          )
+          .map((project) => ({ id: project.id, label: project.title }));
+        const moveToProject =
+          moveCandidates.length === 0
+            ? null
+            : { projects: moveCandidates, disabled: !threadRuntimeCanArchive(thread.runtime) };
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -4647,6 +4661,7 @@ export default function Sidebar() {
                     isActive: projectScopeKey === threadProjectGroup.projectKey,
                   }
                 : null,
+              moveToProject,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -4673,6 +4688,21 @@ export default function Sidebar() {
               ? await requestCustomSnooze()
               : snoozePresets.find((candidate) => `snooze:${candidate.id}` === clicked.value);
           if (preset) attemptSnooze(threadRef, preset);
+          return;
+        }
+        if (clicked.value?.startsWith("move-to-project:")) {
+          const targetProjectId = ProjectId.make(clicked.value.slice("move-to-project:".length));
+          const result = await moveThreadToProject(threadRef, targetProjectId);
+          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Failed to move thread",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
           return;
         }
         switch (clicked.value) {
@@ -4867,9 +4897,11 @@ export default function Sidebar() {
       deleteThread,
       handleMultiSelectContextMenu,
       markThreadUnread,
+      moveThreadToProject,
       openProjectSettings,
       projectScopeKey,
       projectByKey,
+      projects,
       serverConfigs,
       setProjectScopeKey,
       setThreadAutoSettle,

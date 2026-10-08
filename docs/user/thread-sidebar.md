@@ -43,6 +43,15 @@ in a new thread's model picker to add or remove them. A regular click returns to
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
 
+## Move a thread to another project
+
+To re-file an existing thread, open its menu and choose **Move to project**, then
+pick the project. The conversation and its history stay with the thread. Its
+branch and worktree belong to the old project, so the thread starts fresh in the
+new one: when the thread has its own worktree, T3 Code asks before removing it,
+and uncommitted changes in it are lost. A thread with a turn in flight cannot
+move until it finishes.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

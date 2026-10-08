@@ -127,6 +127,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly modelSelection?: ModelSelection;
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
+  /** Re-parent the thread to another project. Resets branch/worktree when omitted. */
+  readonly projectId?: ProjectId;
   /** Kick off an async title regeneration for the thread. */
   readonly regenerateTitle?: boolean;
   /** Link (object) or unlink (null) a pull request (#8160). */
@@ -565,6 +567,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.title !== undefined ||
       input.branch !== undefined ||
       input.worktreePath !== undefined ||
+      input.projectId !== undefined ||
       input.regenerateTitle !== undefined ||
       input.linkedPullRequest !== undefined ||
       input.limitRecovery !== undefined
@@ -577,6 +580,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.branch === undefined ? {} : { branch: input.branch }),
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
+        ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
         ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
         ...(input.linkedPullRequest === undefined
           ? {}

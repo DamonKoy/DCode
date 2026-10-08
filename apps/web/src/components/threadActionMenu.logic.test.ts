@@ -9,6 +9,7 @@ import {
 const baseState: ThreadActionMenuState = {
   branch: null,
   projectFilter: null,
+  moveToProject: null,
   isPinned: false,
   isSettled: false,
   autoSettleEnabled: true,
@@ -133,6 +134,37 @@ describe("buildThreadActionMenuItems", () => {
       (candidate) => candidate.id === "regenerate-title",
     );
     expect(item).toMatchObject({ label: "Regenerating…", disabled: true });
+  });
+
+  it("offers moving to another project as a submenu of project names", () => {
+    const find = (state: ThreadActionMenuState) =>
+      buildThreadActionMenuItems(state).find((item) => item.id === "move-to-project");
+    expect(find(baseState)).toBeUndefined();
+    expect(
+      find({ ...baseState, moveToProject: { projects: [], disabled: false } }),
+    ).toBeUndefined();
+    const item = find({
+      ...baseState,
+      moveToProject: {
+        projects: [
+          { id: "project-a", label: "Alpha" },
+          { id: "project-b", label: "Beta" },
+        ],
+        disabled: false,
+      },
+    });
+    expect(item).toMatchObject({ label: "Move to project", icon: "folder-input" });
+    expect(item?.children?.map((child) => [child.id, child.label])).toEqual([
+      ["move-to-project:project-a", "Alpha"],
+      ["move-to-project:project-b", "Beta"],
+    ]);
+    // A running thread cannot move; the server refuses work in flight.
+    expect(
+      find({
+        ...baseState,
+        moveToProject: { projects: [{ id: "project-a", label: "Alpha" }], disabled: true },
+      })?.disabled,
+    ).toBe(true);
   });
 
   it("marks delete as destructive and keeps it last", () => {

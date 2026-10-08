@@ -2752,6 +2752,13 @@ export const OrchestrationV2Command = Schema.Union([
     branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    /**
+     * Re-parent the thread to another project. Allowed while no run is in
+     * flight; the server also resets `branch` and `worktreePath` to the values
+     * supplied here (or null), since the old project's checkout does not exist
+     * under the new project's workspace root.
+     */
+    projectId: Schema.optional(ProjectId),
     /** Reject unless no message or run has landed on this thread. */
     expectedEmpty: Schema.optional(Schema.Boolean),
     limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecoveryUpdate)),
