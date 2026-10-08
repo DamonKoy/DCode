@@ -19,6 +19,7 @@ import {
   type RuntimeSubagent,
   type RuntimeSubagentStatus,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { MessageKey } from "@t3tools/shared/i18n";
 
 export const AGENTS_BOARD_COLUMNS = ["working", "waiting", "done", "failed"] as const;
@@ -271,4 +272,74 @@ export function summarizeAgentsBoard(rows: ReadonlyArray<StatusBearingRow>): Age
     else if (column === "failed") failed += 1;
   }
   return { total: rows.length, working, waiting, failed };
+}
+
+/**
+ * Connection state for the selected agent's in-page detail. Kept apart from the
+ * task status on purpose: a dropped connection (`cached`) means the client is
+ * showing the last synchronized output, not that the agent stopped. Folding the
+ * two together would report a running agent as failed the moment the socket
+ * blinks.
+ */
+export type AgentDetailConnectionState = "live" | "connecting" | "interrupted" | "pending" | "gone";
+
+export function resolveAgentDetailConnectionState(
+  status: EnvironmentThreadStatus,
+): AgentDetailConnectionState {
+  switch (status) {
+    case "live":
+      return "live";
+    case "synchronizing":
+      return "connecting";
+    case "cached":
+      return "interrupted";
+    case "deleted":
+      return "gone";
+    case "empty":
+      return "pending";
+  }
+}
+
+export const AGENT_DETAIL_CONNECTION_LABEL_KEYS: Readonly<
+  Record<AgentDetailConnectionState, MessageKey>
+> = {
+  live: "agents.detail.connection.live",
+  connecting: "agents.detail.connection.connecting",
+  interrupted: "agents.detail.connection.interrupted",
+  pending: "agents.detail.connection.pending",
+  gone: "agents.detail.connection.gone",
+};
+
+/**
+ * Tool and execution items fold behind a disclosure; everything else reads as
+ * text. The split is by item type rather than by whether the item has detail:
+ * an assistant message with no body should still render as an empty line, not
+ * as a collapse that opens to nothing.
+ */
+const AGENT_DETAIL_TOOL_ITEM_TYPES: ReadonlySet<string> = new Set([
+  "command_execution",
+  "dynamic_tool",
+  "file_search",
+  "web_search",
+  "file_change",
+]);
+
+export function agentDetailItemKind(itemType: string): "text" | "tool" {
+  return AGENT_DETAIL_TOOL_ITEM_TYPES.has(itemType) ? "tool" : "text";
+}
+
+/**
+ * Whether a scroll container sits at its latest output. The detail's follow
+ * mode reads this on scroll: scrolling up past the threshold turns following
+ * off, so new output stops yanking the viewport away from what the reader is
+ * reading.
+ */
+export function isScrolledToLatest(input: {
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly thresholdPx?: number;
+}): boolean {
+  const threshold = input.thresholdPx ?? 48;
+  return input.scrollHeight - input.scrollTop - input.clientHeight <= threshold;
 }
