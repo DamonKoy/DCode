@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import type { AcpToolCallState } from "../../provider/acp/AcpRuntimeModel.ts";
-import { extractCodeBuddySubagentUpdate } from "./CodeBuddyAcp.ts";
+import { extractCodeBuddySubagentUpdate, parseCodeBuddyTaskNotification } from "./CodeBuddyAcp.ts";
 
 /** Shapes below are taken from real WorkBuddy/CodeBuddy turn items. */
 function toolCall(input: {
@@ -210,5 +210,50 @@ describe("extractCodeBuddySubagentUpdate", () => {
       extractCodeBuddySubagentUpdate(toolCall({ rawInput: { prompt: "no subagent type here" } })),
     );
     assert.isUndefined(extractCodeBuddySubagentUpdate(toolCall({})));
+  });
+});
+
+describe("parseCodeBuddyTaskNotification", () => {
+  /** Shape CodeBuddy injects into the owning session after the root turn. */
+  const notification = (status: string, taskId = "agent-81d49c8c-4a0a-4a1a-9d0e-2b1f0e5a7c31") =>
+    [
+      "<task-notification>",
+      `<task-id>${taskId}</task-id>`,
+      "<kind>agent</kind>",
+      `<status>${status}</status>`,
+      "<summary>Ran the migration and pushed the branch</summary>",
+      "</task-notification>",
+      "",
+      "A worker was stopped and is no longer live. Tell the user.",
+    ].join("\n");
+
+  it("reads a finished worker out of the notification", () => {
+    assert.deepEqual(parseCodeBuddyTaskNotification(notification("completed")), {
+      nativeTaskId: "agent-81d49c8c-4a0a-4a1a-9d0e-2b1f0e5a7c31",
+      status: "completed",
+      summary: "Ran the migration and pushed the branch",
+    });
+  });
+
+  it("maps cancelled and failed notifications to their terminal states", () => {
+    assert.equal(parseCodeBuddyTaskNotification(notification("cancelled"))?.status, "cancelled");
+    assert.equal(parseCodeBuddyTaskNotification(notification("failed"))?.status, "failed");
+  });
+
+  it("treats a missing summary as no result", () => {
+    const withoutSummary = notification("completed").replace(/<summary>[\s\S]*?<\/summary>/u, "");
+
+    assert.isNull(parseCodeBuddyTaskNotification(withoutSummary)?.summary);
+  });
+
+  it("ignores text that is not a worker notification", () => {
+    // No notification wrapper at all, a non-worker task id, and a status that
+    // is not terminal must all stay out of the subagent path.
+    assert.isUndefined(parseCodeBuddyTaskNotification("just a normal user message"));
+    assert.isUndefined(parseCodeBuddyTaskNotification(notification("completed", "task-1234")));
+    assert.isUndefined(parseCodeBuddyTaskNotification(notification("running")));
+    assert.isUndefined(
+      parseCodeBuddyTaskNotification("<task-notification>\n<status>completed</status>\n"),
+    );
   });
 });
