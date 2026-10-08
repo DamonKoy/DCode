@@ -314,6 +314,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["sort projects sidebar manual created recent"],
   },
   {
+    id: "thread-grouping",
+    title: "Sidebar layout",
+    to: "/settings/general",
+    searchTerms: ["group threads by project sections lifecycle sidebar layout tree codex"],
+  },
+  {
     id: "snooze-limited-threads",
     title: "Snooze limited threads",
     to: "/settings/general",

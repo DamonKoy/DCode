@@ -45,6 +45,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarThreadGroupingMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -191,6 +192,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: settingsText("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_THREAD_GROUPING_MODE_LABELS: Record<SidebarThreadGroupingMode, string> = {
+  sections: settingsText("Sections"),
+  projects: settingsText("Project groups"),
+};
+const isSidebarThreadGroupingMode = Schema.is(SidebarThreadGroupingMode);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: settingsText("System default"),
@@ -574,6 +581,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
+      ...(settings.sidebarThreadGroupingMode !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode
+        ? ["Sidebar layout"]
+        : []),
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -713,6 +723,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.snoozeLimitedThreads,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
+      settings.sidebarThreadGroupingMode,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -813,6 +824,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarThreadGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2328,6 +2340,47 @@ export function GeneralSettingsPanel() {
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
                     {SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-grouping")}
+          description="Arrange threads by lifecycle section, or group them under their project."
+          resetAction={
+            settings.sidebarThreadGroupingMode !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode ? (
+              <SettingResetButton
+                label="sidebar layout"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadGroupingMode}
+              onValueChange={(value) => {
+                if (isSidebarThreadGroupingMode(value)) {
+                  updateSettings({ sidebarThreadGroupingMode: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Sidebar layout">
+                <SelectValue>
+                  {SIDEBAR_THREAD_GROUPING_MODE_LABELS[settings.sidebarThreadGroupingMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarThreadGroupingMode.literals.map((mode) => (
+                  <SelectItem hideIndicator key={mode} value={mode}>
+                    {SIDEBAR_THREAD_GROUPING_MODE_LABELS[mode]}
                   </SelectItem>
                 ))}
               </SelectPopup>
