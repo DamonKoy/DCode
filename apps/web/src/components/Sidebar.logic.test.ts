@@ -11,6 +11,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarProjectSections,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
@@ -1904,6 +1905,95 @@ describe("sortSidebarV2ProjectGroups", () => {
         (project) => project.projectKey,
       ),
     ).toEqual(["logical-newer", "logical-older"]);
+  });
+});
+
+describe("buildSidebarProjectSections", () => {
+  const projectA = ProjectId.make("project-a");
+  const projectB = ProjectId.make("project-b");
+  const projects = [
+    {
+      ...makeProject({ id: projectA, title: "A project" }),
+      projectKey: "logical-a",
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: projectA }],
+    },
+    {
+      ...makeProject({ id: projectB, title: "B project" }),
+      projectKey: "logical-b",
+      memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: projectB }],
+    },
+  ];
+
+  it("buckets threads under their project in the incoming order of both lists", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("b-1"), projectId: projectB }),
+      makeThread({ id: ThreadId.make("a-1"), projectId: projectA }),
+      makeThread({ id: ThreadId.make("a-2"), projectId: projectA }),
+    ];
+
+    const sections = buildSidebarProjectSections({ projects, threads });
+
+    expect(sections.map((section) => section.projectKey)).toEqual(["logical-a", "logical-b"]);
+    expect(sections[0]!.threads.map((thread) => thread.id)).toEqual(["a-1", "a-2"]);
+    expect(sections[1]!.threads.map((thread) => thread.id)).toEqual(["b-1"]);
+  });
+
+  it("collects every physical member of a logical group into one section", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const grouped = [
+      {
+        ...makeProject({ id: projectA, title: "A project" }),
+        projectKey: "logical-a",
+        memberProjectRefs: [
+          { environmentId: localEnvironmentId, projectId: projectA },
+          { environmentId: remoteEnvironmentId, projectId: projectA },
+        ],
+      },
+    ];
+    const threads = [
+      makeThread({ id: ThreadId.make("local-1"), projectId: projectA }),
+      makeThread({
+        id: ThreadId.make("remote-1"),
+        environmentId: remoteEnvironmentId,
+        projectId: projectA,
+      }),
+    ];
+
+    const sections = buildSidebarProjectSections({ projects: grouped, threads });
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.threads.map((thread) => thread.id)).toEqual(["local-1", "remote-1"]);
+  });
+
+  it("drops empty projects by default and keeps them on request", () => {
+    const threads = [makeThread({ id: ThreadId.make("a-1"), projectId: projectA })];
+
+    expect(buildSidebarProjectSections({ projects, threads }).map((s) => s.projectKey)).toEqual([
+      "logical-a",
+    ]);
+    expect(
+      buildSidebarProjectSections({ projects, threads, includeEmptyProjects: true }).map(
+        (s) => s.projectKey,
+      ),
+    ).toEqual(["logical-a", "logical-b"]);
+  });
+
+  it("drops threads whose project is not in the list, and same-id projects in other environments", () => {
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const threads = [
+      makeThread({ id: ThreadId.make("a-1"), projectId: projectA }),
+      makeThread({ id: ThreadId.make("orphan"), projectId: ProjectId.make("project-missing") }),
+      makeThread({
+        id: ThreadId.make("a-remote"),
+        environmentId: remoteEnvironmentId,
+        projectId: projectA,
+      }),
+    ];
+
+    const sections = buildSidebarProjectSections({ projects, threads });
+
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.threads.map((thread) => thread.id)).toEqual(["a-1"]);
   });
 });
 

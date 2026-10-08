@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
 import type { Project } from "./types";
+import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
@@ -43,6 +44,20 @@ export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
   isPreferred: boolean;
+}
+
+/**
+ * Preference keys a project's expand/collapse state is stored under, most
+ * specific first: the logical group key, then each member's physical key and
+ * its pre-grouping cwd key. Shared by the legacy tree and the modern grouped
+ * sidebar so both read one piece of persisted state.
+ */
+export function projectExpansionPreferenceKeys(project: SidebarProjectSnapshot): string[] {
+  return [
+    project.projectKey,
+    ...project.memberProjects.map((member) => member.physicalProjectKey),
+    ...project.memberProjects.map((member) => legacyProjectCwdPreferenceKey(member.workspaceRoot)),
+  ];
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {

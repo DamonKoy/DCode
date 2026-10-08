@@ -124,10 +124,15 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
+  projectExpansionPreferenceKeys,
   projectGroupsSpanEnvironments,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
+import {
+  legacyProjectCwdPreferenceKey,
+  resolveProjectExpanded,
+  useUiStateStore,
+} from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
   useThreadSelectionStore,
@@ -178,6 +183,7 @@ import {
   filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  buildSidebarProjectSections,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
@@ -794,6 +800,37 @@ function SidebarSectionHeader(props: {
   );
 }
 
+// A project's header in the grouped ("projects") layout: the project's icon
+// and name, its visible thread count, and the expand/collapse chevron. Not a
+// SortableSidebarMarker — project reordering stays a flat-layout affordance,
+// so the header is deliberately outside the drag machinery.
+function SidebarProjectHeader(props: {
+  project: SidebarProjectSnapshot;
+  threadCount: number;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li className="list-none">
+      <CollapsibleSectionHeader
+        onClick={props.onToggle}
+        expanded={props.expanded}
+        tone="muted"
+        data-testid="sidebar-project-header"
+        aria-label={`${props.project.displayName}, ${props.threadCount} threads`}
+        accessory={
+          <span className="shrink-0 text-secondary-label tabular-nums">{props.threadCount}</span>
+        }
+      >
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+          <span className="truncate">{props.project.displayName}</span>
+        </span>
+      </CollapsibleSectionHeader>
+    </li>
+  );
+}
+
 // One unsent draft session the user has invested content in. Two lines,
 // nothing else: project name, then the typed prompt. All the draft's
 // settings (model, env mode, branch, worktree) still travel with it —
@@ -1115,6 +1152,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   environmentMachine: EnvironmentMachineKind;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
+  // The grouped ("projects") layout already names the project in the section
+  // header, so its rows drop the repeating icon + label.
+  hideProjectLabel?: boolean;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -1778,11 +1818,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             <span
               className={cn(
                 "shrink-0 transition-opacity",
-                (!props.isActive || variantAction === "unsettle") &&
+                !props.hideProjectLabel &&
+                  (!props.isActive || variantAction === "unsettle") &&
                   "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
               )}
             >
-              {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+              {props.hideProjectLabel || props.project === null ? null : (
+                <ProjectFavicon project={props.project} className="size-4" />
+              )}
             </span>
             {draftIndicator}
             {title}
@@ -1941,20 +1984,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div className="relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)">
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-              ) : null}
-              {props.projectDisplayName ? (
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate text-secondary-label text-xs",
-                    shouldRecede ? "font-normal" : "font-medium",
+              {props.hideProjectLabel ? null : (
+                <>
+                  {props.project ? (
+                    <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+                  ) : null}
+                  {props.projectDisplayName ? (
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate text-secondary-label text-xs",
+                        shouldRecede ? "font-normal" : "font-medium",
+                      )}
+                    >
+                      {props.projectDisplayName}
+                    </span>
+                  ) : (
+                    <span className="flex-1" />
                   )}
-                >
-                  {props.projectDisplayName}
-                </span>
-              ) : (
-                <span className="flex-1" />
+                </>
               )}
               {pinIndicator}
               {/* The visible state owns this slot's width: status at rest,
@@ -2327,6 +2374,8 @@ export default function Sidebar() {
   const { t } = useI18n();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
+  const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -2334,6 +2383,7 @@ export default function Sidebar() {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
+  const groupedByProject = useClientSettings((s) => s.sidebarThreadGroupingMode) === "projects";
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -2819,6 +2869,45 @@ export default function Sidebar() {
     workingShelfEnabled,
   ]);
 
+  // The grouped ("projects") layout nests every visible thread under its
+  // project header instead of the lifecycle shelves. It deliberately reads the
+  // UNCAPPED thread lists: the shelves' collapse state and "Show more" tails
+  // are flat-layout paging, and a project's rows must not hide behind a header
+  // the grouped layout does not render.
+  const groupedProjectSections = useMemo(() => {
+    if (!groupedByProject) return null;
+    return buildSidebarProjectSections({
+      projects: scopedProjectGroup === null ? projectGroups : [scopedProjectGroup],
+      threads: [
+        ...pinnedThreads,
+        ...activeThreads,
+        ...workingThreads,
+        ...snoozedThreads,
+        ...settledThreads,
+      ],
+    }).map((section) => ({
+      ...section,
+      expanded: resolveProjectExpanded(
+        projectExpandedById,
+        projectExpansionPreferenceKeys(section.project),
+      ),
+    }));
+  }, [
+    activeThreads,
+    groupedByProject,
+    pinnedThreads,
+    projectExpandedById,
+    projectGroups,
+    scopedProjectGroup,
+    settledThreads,
+    snoozedThreads,
+    workingThreads,
+  ]);
+  const groupedProjectSectionByKey = useMemo(
+    () => new Map((groupedProjectSections ?? []).map((section) => [section.projectKey, section])),
+    [groupedProjectSections],
+  );
+
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(0);
@@ -2983,20 +3072,31 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, workingShelfExpanded, workingThreads]);
 
+  // The ordered list is what the rendered list means: in the grouped layout it
+  // is the project tree (a collapsed project contributes nothing, exactly as it
+  // renders), otherwise the flat lifecycle order. Keyboard traversal, jump
+  // hints, shift-range selection and the row lookup all read this, so the
+  // on-screen order and the ordered order can never disagree.
   const orderedThreads = useMemo(
-    () => [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...visibleWorkingThreads,
-      ...visibleSnoozedThreads,
-      ...renderedSettledThreads,
-    ],
+    () =>
+      groupedProjectSections === null
+        ? [
+            ...pinnedThreads,
+            ...activeThreads,
+            ...visibleWorkingThreads,
+            ...visibleSnoozedThreads,
+            ...renderedSettledThreads,
+          ]
+        : groupedProjectSections.flatMap((section) =>
+            section.expanded ? [...section.threads] : [],
+          ),
     [
       pinnedThreads,
       activeThreads,
       visibleWorkingThreads,
       visibleSnoozedThreads,
       renderedSettledThreads,
+      groupedProjectSections,
     ],
   );
   const orderedThreadKeys = useMemo(
@@ -3714,6 +3814,29 @@ export default function Sidebar() {
         const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
         return { kind: "thread", key, section };
       });
+    if (groupedProjectSections !== null) {
+      const groupedItems: SidebarListItem[] = [];
+      for (const section of groupedProjectSections) {
+        groupedItems.push({
+          kind: "project",
+          projectKey: section.projectKey,
+          displayName: section.project.displayName,
+          threadCount: section.threads.length,
+        });
+        // A collapsed project contributes its header only, so its rows never
+        // enter the measured order and cannot animate in behind the header.
+        if (!section.expanded) continue;
+        for (const thread of section.threads) {
+          const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+          groupedItems.push({
+            kind: "thread",
+            key,
+            section: sectionByThreadKey.get(key) ?? "active",
+          });
+        }
+      }
+      return groupedItems;
+    }
     if (
       pinnedThreads.length +
         activeThreads.length +
@@ -3746,8 +3869,10 @@ export default function Sidebar() {
     return items;
   }, [
     activeThreads,
+    groupedProjectSections,
     pinnedThreads,
     renderedSettledThreads,
+    sectionByThreadKey,
     settledThreads.length,
     snoozedThreads.length,
     visibleSnoozedThreads,
@@ -3770,7 +3895,11 @@ export default function Sidebar() {
   const sidebarListOrderKey = useMemo(
     () =>
       sidebarListItems
-        .map((item) => (item.kind === "thread" ? `${item.key}:${item.section}` : item.marker))
+        .map((item) => {
+          if (item.kind === "thread") return `${item.key}:${item.section}`;
+          if (item.kind === "project") return `${item.projectKey}:${item.threadCount}`;
+          return item.marker;
+        })
         .join("\0"),
     [sidebarListItems],
   );
@@ -5184,6 +5313,7 @@ export default function Sidebar() {
                               projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
                               null
                             }
+                            hideProjectLabel={groupedByProject}
                             projectDisplayName={
                               projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
@@ -5231,6 +5361,10 @@ export default function Sidebar() {
                             id={threadKey}
                             contextDrag={isContextDrag}
                             disabled={
+                              // The grouped layout has no shelf boundaries to
+                              // drop across, and reordering inside a project
+                              // would fight the project's own sort.
+                              groupedByProject ||
                               renamingThreadKey === threadKey ||
                               section === "working" ||
                               !draggableThreadKeys.has(threadKey) ||
@@ -5256,6 +5390,24 @@ export default function Sidebar() {
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          continue;
+                        }
+                        if (item.kind === "project") {
+                          const section = groupedProjectSectionByKey.get(item.projectKey);
+                          if (section !== undefined) {
+                            const preferenceKeys = projectExpansionPreferenceKeys(section.project);
+                            items.push(
+                              <SidebarProjectHeader
+                                key={`project:${item.projectKey}`}
+                                project={section.project}
+                                threadCount={item.threadCount}
+                                expanded={section.expanded}
+                                onToggle={() =>
+                                  setProjectExpanded(preferenceKeys, !section.expanded)
+                                }
+                              />,
+                            );
+                          }
                           continue;
                         }
                         switch (item.marker) {

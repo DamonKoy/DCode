@@ -144,6 +144,7 @@ export function createSidebarSortingStrategy(input: {
         }
         continue;
       }
+      if (item.kind !== "thread") continue;
       if (item.section === "pinned" || item.section === "active" || item.section === "working")
         cardHeight ??= rects[index]?.height;
       else slimHeight ??= rects[index]?.height;

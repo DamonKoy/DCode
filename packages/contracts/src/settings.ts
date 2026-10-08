@@ -66,6 +66,15 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+
+// How the sidebar arranges threads, NOT to be confused with
+// SidebarProjectGroupingMode above (which merges the same repository across
+// environments into one project). "sections" is the lifecycle layout
+// (pinned/active/working/snoozed/settled); "projects" nests each thread under
+// its project header.
+export const SidebarThreadGroupingMode = Schema.Literals(["sections", "projects"]);
+export type SidebarThreadGroupingMode = typeof SidebarThreadGroupingMode.Type;
+const DEFAULT_SIDEBAR_THREAD_GROUPING_MODE: SidebarThreadGroupingMode = "sections";
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
 export const SidebarThreadPreviewCount = Schema.Int.check(
@@ -475,6 +484,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
+  ),
+  sidebarThreadGroupingMode: SidebarThreadGroupingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_GROUPING_MODE)),
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
@@ -1826,6 +1838,7 @@ export const ClientSettingsPatch = Schema.Struct({
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
+  sidebarThreadGroupingMode: Schema.optionalKey(SidebarThreadGroupingMode),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),

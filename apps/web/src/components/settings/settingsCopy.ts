@@ -24,6 +24,11 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Composer context": "输入框上下文",
   "Project grouping": "项目分组",
   "Project order": "项目顺序",
+  "Sidebar layout": "侧栏布局",
+  Sections: "分区",
+  "Project groups": "按项目分组",
+  "Arrange threads by lifecycle section, or group them under their project.":
+    "按生命周期分区排列会话，或将会话归到各自项目下。",
   "Snooze limited threads": "暂停额度受限的会话",
   "Auto-resume limited threads": "自动恢复额度受限的会话",
   "Working section (beta)": "进行中分区（测试）",

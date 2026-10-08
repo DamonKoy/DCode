@@ -644,6 +644,24 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+
+  it("defaults the thread grouping mode to the lifecycle sections", () => {
+    expect(decodeClientSettings({}).sidebarThreadGroupingMode).toBe("sections");
+  });
+
+  it("round-trips an explicit project grouping mode", () => {
+    expect(
+      decodeClientSettings({ sidebarThreadGroupingMode: "projects" }).sidebarThreadGroupingMode,
+    ).toBe("projects");
+    expect(
+      decodeClientSettingsPatch({ sidebarThreadGroupingMode: "projects" })
+        .sidebarThreadGroupingMode,
+    ).toBe("projects");
+  });
+
+  it("rejects an unknown thread grouping mode at the patch boundary", () => {
+    expect(() => decodeClientSettingsPatch({ sidebarThreadGroupingMode: "nested" })).toThrow();
+  });
 });
 
 describe("ClientSettings context window meter", () => {

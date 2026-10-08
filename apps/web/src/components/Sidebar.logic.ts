@@ -168,10 +168,28 @@ export function sidebarMarkerId(marker: SidebarListMarker): string {
 
 export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
-  | { readonly kind: "marker"; readonly marker: SidebarListMarker };
+  | { readonly kind: "marker"; readonly marker: SidebarListMarker }
+  /** A project header in the grouped ("projects") thread layout. */
+  | {
+      readonly kind: "project";
+      readonly projectKey: string;
+      readonly displayName: string;
+      readonly threadCount: number;
+    };
+
+/** Project header ids stay colon-free like markers so no scoped thread key
+    can collide with them. */
+const SIDEBAR_PROJECT_PREFIX = "sidebar-project-";
 
 export function sidebarListItemId(item: SidebarListItem): string {
-  return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
+  switch (item.kind) {
+    case "thread":
+      return item.key;
+    case "project":
+      return `${SIDEBAR_PROJECT_PREFIX}${item.projectKey}`;
+    case "marker":
+      return sidebarMarkerId(item.marker);
+  }
 }
 
 /** The section a slot belongs to, read off the markers around it: from
@@ -223,6 +241,8 @@ export function resolveSidebarDropTarget(
         item.marker === "settled-header"
       )
         break;
+    } else if (item.kind !== "thread") {
+      continue;
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
@@ -470,13 +490,13 @@ type ScopedSidebarProject = SidebarProject & {
   environmentId: string;
 };
 
-type ScopedSidebarThread = ThreadSortInput & {
+export type ScopedSidebarThread = ThreadSortInput & {
   environmentId: string;
   projectId: string;
   archivedAt: string | null;
 };
 
-type LogicalSidebarProject = SidebarProject & {
+export type LogicalSidebarProject = SidebarProject & {
   projectKey: string;
   memberProjectRefs: readonly {
     environmentId: string;
@@ -1439,4 +1459,61 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export interface SidebarProjectSection<
+  TProject extends LogicalSidebarProject = LogicalSidebarProject,
+  TThread extends ScopedSidebarThread = ScopedSidebarThread,
+> {
+  readonly project: TProject;
+  readonly projectKey: string;
+  readonly threads: readonly TThread[];
+}
+
+/**
+ * Buckets the visible threads under their logical project for the grouped
+ * ("projects") sidebar layout, preserving the incoming order of both lists.
+ *
+ * Project order comes from `projects` (the caller has already sorted it by the
+ * sidebar project sort order); thread order comes from `threads` (already
+ * sorted per lifecycle section, so a project's pinned rows stay on top).
+ * Threads whose project is not in `projects` — archived projects, or rows
+ * dropped by the project scope filter — are excluded.
+ */
+export function buildSidebarProjectSections<
+  TProject extends LogicalSidebarProject,
+  TThread extends ScopedSidebarThread,
+>(input: {
+  readonly projects: readonly TProject[];
+  readonly threads: readonly TThread[];
+  /** Keep projects that have no visible threads. Defaults to false. */
+  readonly includeEmptyProjects?: boolean;
+}): SidebarProjectSection<TProject, TThread>[] {
+  const projectKeyByRef = new Map<string, string>();
+  for (const project of input.projects) {
+    for (const ref of project.memberProjectRefs) {
+      projectKeyByRef.set(`${ref.environmentId}\0${ref.projectId}`, project.projectKey);
+    }
+  }
+
+  const threadsByProjectKey = new Map<string, TThread[]>();
+  for (const thread of input.threads) {
+    const projectKey = projectKeyByRef.get(`${thread.environmentId}\0${thread.projectId}`);
+    if (projectKey === undefined) continue;
+    const existing = threadsByProjectKey.get(projectKey);
+    if (existing) {
+      existing.push(thread);
+    } else {
+      threadsByProjectKey.set(projectKey, [thread]);
+    }
+  }
+
+  const includeEmptyProjects = input.includeEmptyProjects ?? false;
+  const sections: SidebarProjectSection<TProject, TThread>[] = [];
+  for (const project of input.projects) {
+    const threads = threadsByProjectKey.get(project.projectKey) ?? [];
+    if (threads.length === 0 && !includeEmptyProjects) continue;
+    sections.push({ project, projectKey: project.projectKey, threads });
+  }
+  return sections;
 }
