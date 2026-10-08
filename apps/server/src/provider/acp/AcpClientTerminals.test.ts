@@ -75,6 +75,33 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("does not leak an ambient ACP MCP credential into an unscoped terminal", () => {
+    const previous = process.env.T3_ACP_MCP_AUTHORIZATION;
+    process.env.T3_ACP_MCP_AUTHORIZATION = "Bearer ambient-secret";
+    return withTerminals((terminals) =>
+      Effect.gen(function* () {
+        const created = yield* terminals.create({
+          sessionId: "unscoped",
+          command: process.execPath,
+          args: ["-e", "process.stdout.write(process.env.T3_ACP_MCP_AUTHORIZATION ?? '')"],
+        });
+        yield* terminals.waitForExit({ sessionId: "unscoped", terminalId: created.terminalId });
+        const output = yield* terminals.output({
+          sessionId: "unscoped",
+          terminalId: created.terminalId,
+        });
+        expect(output.output).toBe("");
+      }),
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.T3_ACP_MCP_AUTHORIZATION;
+          else process.env.T3_ACP_MCP_AUTHORIZATION = previous;
+        }),
+      ),
+    );
+  });
+
   it.effect("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({

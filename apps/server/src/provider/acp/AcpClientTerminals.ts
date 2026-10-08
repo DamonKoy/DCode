@@ -28,6 +28,24 @@ const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
 
+/**
+ * The ACP MCP credential travels as a set of environment variables. A terminal
+ * only sees them when its session was explicitly scoped to one, so they are
+ * stripped from any inherited environment before spawning; otherwise a process
+ * that already carries them (a nested agent, a shell with them exported) would
+ * leak the credential into terminals that never asked for it.
+ */
+const ACP_CREDENTIAL_ENV_PREFIX = "T3_ACP_MCP_";
+
+function withoutAcpCredentials(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined || name.startsWith(ACP_CREDENTIAL_ENV_PREFIX)) continue;
+    sanitized[name] = value;
+  }
+  return sanitized;
+}
+
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
     message,
@@ -236,12 +254,15 @@ export const makeAcpClientTerminals = (
               (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
             );
             const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-            const environment =
-              options.environment === undefined &&
-              sessionEnvironment === undefined &&
-              (request.env?.length ?? 0) === 0
-                ? undefined
-                : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+            // Base the child on the server's environment minus any ACP MCP
+            // credential, then let an explicit session scope or the agent's own
+            // request supply one. Passing an environment always (never omitting
+            // it) keeps the inherited value from filling the credential back in.
+            const environment = {
+              ...withoutAcpCredentials(options.environment ?? process.env),
+              ...sessionEnvironment,
+              ...requestEnvironment,
+            };
             // Each terminal owns a scope so the spawned process is reliably reaped:
             // closing the scope kills a still-running command and frees the handle.
             const terminalScope = yield* Scope.make();
