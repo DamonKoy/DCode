@@ -86,6 +86,8 @@ export const enMessages = {
   "agents.page.idle": "Nothing running",
   "agents.page.unknownProject": "Unknown project",
   "agents.page.showMore": "Show {count} more",
+  "agents.page.filter.all": "All projects",
+  "agents.page.filter.label": "Filter by project",
   "draft.hero.buildInPrefix": "What should we build in ",
   "draft.hero.buildInSuffix": "?",
   "draft.hero.startSuffix": " to start",

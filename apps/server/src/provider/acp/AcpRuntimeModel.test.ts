@@ -1218,7 +1218,14 @@ describe("AcpRuntimeModel", () => {
         sessionUpdate: "state_update",
         state: "idle",
         stopReason: "end_turn",
-        usage: { totalTokens: 420, inputTokens: 300, outputTokens: 100, thoughtTokens: 20 },
+        usage: {
+          totalTokens: 420,
+          inputTokens: 300,
+          outputTokens: 100,
+          thoughtTokens: 20,
+          cachedReadTokens: 80,
+          cachedWriteTokens: 40,
+        },
       },
     } satisfies EffectAcpSchema.SessionNotification);
 
@@ -1241,8 +1248,19 @@ describe("AcpRuntimeModel", () => {
     });
     expect(idle.events[0]).toMatchObject({
       _tag: "UsageUpdated",
-      usage: { usedTokens: 420 },
+      // Every category ACP reports is kept; `cachedWriteTokens` has no snapshot
+      // field and is intentionally absent here.
+      usage: {
+        usedTokens: 420,
+        inputTokens: 300,
+        outputTokens: 100,
+        cachedInputTokens: 80,
+        reasoningOutputTokens: 20,
+      },
     });
+    expect((idle.events[0] as { usage: Record<string, unknown> }).usage).not.toHaveProperty(
+      "cachedWriteTokens",
+    );
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {

@@ -1571,9 +1571,23 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
     }
     case "state_update": {
       if (upd.state === "idle" && upd.usage !== undefined && upd.usage !== null) {
+        // ACP's idle usage carries the full session token breakdown, not just a
+        // context total. Keep every category the snapshot can express so the
+        // live meter and per-turn usage agree; `cachedWriteTokens` has no
+        // snapshot field and travels on the per-turn `TurnTokenUsage` instead.
         events.push({
           _tag: "UsageUpdated",
-          usage: { usedTokens: upd.usage.totalTokens },
+          usage: {
+            usedTokens: upd.usage.totalTokens,
+            inputTokens: upd.usage.inputTokens,
+            outputTokens: upd.usage.outputTokens,
+            ...(upd.usage.cachedReadTokens === undefined || upd.usage.cachedReadTokens === null
+              ? {}
+              : { cachedInputTokens: upd.usage.cachedReadTokens }),
+            ...(upd.usage.thoughtTokens === undefined || upd.usage.thoughtTokens === null
+              ? {}
+              : { reasoningOutputTokens: upd.usage.thoughtTokens }),
+          },
           rawPayload: params,
         });
       }

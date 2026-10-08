@@ -89,6 +89,7 @@ import {
   acpProjectedCommandExitCode,
   acpToolCallDiffPatch,
   acpTurnStartShouldPreserveContinuation,
+  acpTurnTokenUsage,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
   type AcpAdapterV2Flavor,
@@ -14769,5 +14770,37 @@ describe("acpPostSettleMonitorPromptShouldSuppress", () => {
     assert.isFalse(
       acpPostSettleMonitorPromptShouldSuppress({ taskId: "task-failed", status: "failed" }),
     );
+  });
+});
+
+describe("acpTurnTokenUsage", () => {
+  it("maps every ACP category, including cache write, into per-turn usage", () => {
+    const usage: EffectAcpSchema.Usage = {
+      totalTokens: 420,
+      inputTokens: 300,
+      outputTokens: 100,
+      thoughtTokens: 20,
+      cachedReadTokens: 80,
+      cachedWriteTokens: 40,
+    };
+    assert.deepEqual(acpTurnTokenUsage(usage, false), {
+      usageScope: "main_agent",
+      hasSubagents: false,
+      cachedInputTokens: 80,
+      cacheCreationTokens: 40,
+      reasoningTokens: 20,
+      usageStatus: "complete",
+      inputTokens: 300,
+      outputTokens: 100,
+    });
+  });
+
+  it("omits absent categories and marks a zero report unavailable", () => {
+    const usage: EffectAcpSchema.Usage = { totalTokens: 0, inputTokens: 0, outputTokens: 0 };
+    assert.deepEqual(acpTurnTokenUsage(usage, true), {
+      usageScope: "main_agent",
+      hasSubagents: true,
+      usageStatus: "unavailable",
+    });
   });
 });

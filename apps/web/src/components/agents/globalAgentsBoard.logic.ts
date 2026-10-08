@@ -125,4 +125,21 @@ export function globalAgentEnvironmentIds(
   return seen;
 }
 
+/**
+ * The board can span many projects, so the header narrows it to one. A filter
+ * value is `environmentId:projectId` because a project id is only unique
+ * within its environment; an empty selection reads as every project.
+ */
+export function globalAgentProjectKey(row: GlobalAgentRow): string {
+  return `${row.environmentId}:${row.projectId}`;
+}
+
+export function filterGlobalAgentRows(
+  rows: ReadonlyArray<GlobalAgentRow>,
+  selected: string | null,
+): ReadonlyArray<GlobalAgentRow> {
+  if (selected === null || selected === "") return rows;
+  return rows.filter((row) => globalAgentProjectKey(row) === selected);
+}
+
 export type GlobalAgentsBoardColumn = AgentsBoardColumn<GlobalAgentRow>;

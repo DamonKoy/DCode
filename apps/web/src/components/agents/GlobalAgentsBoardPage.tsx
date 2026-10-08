@@ -15,6 +15,7 @@ import { useMemo, useState } from "react";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { Button } from "../ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { isElectron } from "../../env";
 import { useI18n } from "../../hooks/useI18n";
 import {
@@ -28,7 +29,9 @@ import { AgentCard } from "./AgentCard";
 import { AgentLane } from "./AgentLane";
 import {
   buildGlobalAgentRows,
+  filterGlobalAgentRows,
   globalAgentEnvironmentIds,
+  globalAgentProjectKey,
   type GlobalAgentRow,
 } from "./globalAgentsBoard.logic.ts";
 import {
@@ -49,9 +52,14 @@ export function GlobalAgentsBoardPage() {
   const serverConfigs = useServerConfigs();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const navigate = useNavigate();
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [laneLimits, setLaneLimits] = useState<Partial<Record<AgentsBoardColumnId, number>>>({});
 
-  const rows = useMemo(() => buildGlobalAgentRows({ threads, projects }), [projects, threads]);
+  const allRows = useMemo(() => buildGlobalAgentRows({ threads, projects }), [projects, threads]);
+  const rows = useMemo(
+    () => filterGlobalAgentRows(allRows, projectFilter),
+    [allRows, projectFilter],
+  );
   const columns = useMemo(() => groupAgentsBoardRows(rows), [rows]);
   const summary = summarizeAgentsBoard(rows);
   const environmentIds = globalAgentEnvironmentIds(rows);
@@ -70,6 +78,19 @@ export function GlobalAgentsBoardPage() {
     ...(multiEnvironment ? [serverConfigs.get(row.environmentId)?.environment.label ?? ""] : []),
   ];
 
+  /** One option per environment-scoped project, in the row set's first-seen order. */
+  const projectOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const row of allRows) {
+      const key = globalAgentProjectKey(row);
+      if (!seen.has(key)) {
+        seen.set(key, row.projectTitle ?? t("agents.page.unknownProject"));
+      }
+    }
+    return [...seen.entries()];
+  }, [allRows, t]);
+  const filterVisible = projectOptions.length > 1;
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
       <WorkspacePageHeader electron={isElectron}>
@@ -79,6 +100,38 @@ export function GlobalAgentsBoardPage() {
           </WorkspaceBreadcrumbItem>
         </WorkspaceBreadcrumb>
         <div className="min-w-0 flex-1" />
+        {filterVisible ? (
+          <Select
+            value={projectFilter ?? ""}
+            onValueChange={(value) => {
+              setProjectFilter(value === "" ? null : value);
+              setLaneLimits({});
+            }}
+          >
+            <SelectTrigger
+              size="sm"
+              className="w-44 shrink-0"
+              aria-label={t("agents.page.filter.label")}
+            >
+              <SelectValue>
+                {projectFilter === null
+                  ? t("agents.page.filter.all")
+                  : (projectOptions.find(([key]) => key === projectFilter)?.[1] ??
+                    t("agents.page.filter.all"))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup align="end" alignItemWithTrigger={false}>
+              <SelectItem hideIndicator value="">
+                {t("agents.page.filter.all")}
+              </SelectItem>
+              {projectOptions.map(([key, label]) => (
+                <SelectItem key={key} hideIndicator value={key}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        ) : null}
         <span className="shrink-0 text-xs text-muted-foreground" data-agents-page-summary>
           {summary.total === 0
             ? t("agents.page.idle")

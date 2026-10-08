@@ -81,6 +81,8 @@ const setup = Effect.gen(function* () {
 const layerService = (input: {
   readonly prefix: string;
   readonly home: string;
+  /** Fixed base dir, so a test can seed `<baseDir>/userdata` before the scan. */
+  readonly baseDir?: string;
   readonly settings: Parameters<typeof ServerSettings.layerTest>[0];
   readonly onRatesFetch?: () => void;
   /** Defaults to an unparsable document so every scan retries the fetch. */
@@ -88,7 +90,7 @@ const layerService = (input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
 }) =>
-  ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
+  ServerConfig.layerTest(process.cwd(), input.baseDir ?? { prefix: input.prefix }).pipe(
     Layer.provideMerge(NodeServices.layer),
     Layer.provideMerge(Layer.succeed(HostProcessPlatform, input.platform ?? "linux")),
     Layer.provideMerge(ServerSettings.layerTest(input.settings)),
@@ -1367,6 +1369,177 @@ describe("UsageService", () => {
         orphanedAt,
         `interruption left the next matching request pending at scheduler check ${orphanedAt}`,
       );
+    }).pipe(Effect.scoped),
+  );
+});
+
+/**
+ * Seeds DCode's own projection database with the provider-turn tables the
+ * persisted-usage reader queries. Only the columns the reader reads exist.
+ */
+async function seedT3UsageDatabase(
+  stateDir: string,
+  turns: readonly {
+    readonly id: string;
+    readonly driver: string;
+    readonly instanceId: string;
+    readonly model: string;
+    readonly completedAt: string;
+    readonly payload: unknown;
+  }[],
+): Promise<void> {
+  await NodeFSP.mkdir(stateDir, { recursive: true });
+  const db = new NodeSqlite.DatabaseSync(NodePath.join(stateDir, "statev2.sqlite"));
+  try {
+    db.exec(`
+      CREATE TABLE orchestration_v2_projection_provider_threads (
+        provider_thread_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        driver TEXT,
+        provider_instance_id TEXT,
+        provider_session_id TEXT,
+        payload_json TEXT NOT NULL
+      );
+      CREATE TABLE orchestration_v2_projection_provider_sessions (
+        provider_session_id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        model TEXT,
+        payload_json TEXT NOT NULL
+      );
+      CREATE TABLE orchestration_v2_projection_provider_turns (
+        provider_turn_id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL,
+        provider_thread_id TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT,
+        payload_json TEXT NOT NULL
+      );
+    `);
+    for (const turn of turns) {
+      const providerThreadId = `pth-${turn.id}`;
+      const sessionId = `ps-${turn.id}`;
+      db.prepare(
+        `INSERT INTO orchestration_v2_projection_provider_threads
+           (provider_thread_id, provider, driver, provider_instance_id, provider_session_id, payload_json)
+         VALUES (?, ?, ?, ?, ?, '{}')`,
+      ).run(providerThreadId, turn.instanceId, turn.driver, turn.instanceId, sessionId);
+      db.prepare(
+        `INSERT INTO orchestration_v2_projection_provider_sessions
+           (provider_session_id, provider, model, payload_json)
+         VALUES (?, ?, ?, '{}')`,
+      ).run(sessionId, turn.instanceId, turn.model);
+      db.prepare(
+        `INSERT INTO orchestration_v2_projection_provider_turns
+           (provider_turn_id, thread_id, provider_thread_id, started_at, completed_at, payload_json)
+         VALUES (?, 'thread-1', ?, ?, ?, ?)`,
+      ).run(
+        turn.id,
+        providerThreadId,
+        turn.completedAt,
+        turn.completedAt,
+        JSON.stringify(turn.payload),
+      );
+    }
+  } finally {
+    db.close();
+  }
+}
+
+describe("UsageService persisted provider usage", () => {
+  it.live("surfaces Pi and ACP per-turn usage as unpriced buckets", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setup;
+      const baseDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-t3-source-")),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => NodeFSP.rm(baseDir, { recursive: true, force: true })),
+      );
+      yield* Effect.promise(() =>
+        seedT3UsageDatabase(NodePath.join(baseDir, "userdata"), [
+          {
+            id: "turn-acp",
+            driver: "acpRegistry",
+            instanceId: "workbuddy",
+            model: "custom-unknown-model",
+            completedAt: "2026-08-01T10:00:00Z",
+            payload: {
+              turnTokenUsage: {
+                usageScope: "main_agent",
+                hasSubagents: false,
+                usageStatus: "complete",
+                inputTokens: 300,
+                outputTokens: 100,
+                cachedInputTokens: 80,
+                cacheCreationTokens: 40,
+              },
+            },
+          },
+          {
+            id: "turn-pi",
+            driver: "pi",
+            instanceId: "pi",
+            model: "custom-unknown-model",
+            completedAt: "2026-08-01T11:00:00Z",
+            payload: {
+              tokenUsage: {
+                usedTokens: 500,
+                inputTokens: 400,
+                cachedInputTokens: 100,
+                outputTokens: 90,
+                updatedAt: "2026-08-01T11:00:00Z",
+              },
+            },
+          },
+        ]),
+      );
+
+      const summary = yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        return yield* service.readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-t3-source",
+            baseDir,
+            home,
+            settings,
+          }),
+        ),
+      );
+
+      const acp = summary.buckets.find((bucket) => bucket.provider === "acpRegistry");
+      assert.ok(acp, "the ACP bucket must appear");
+      assert.deepStrictEqual(acp.totals, {
+        uncachedInputTokens: 180,
+        cachedInputTokens: 80,
+        cacheCreationTokens: 40,
+        outputTokens: 100,
+        reasoningTokens: 0,
+      });
+      // No rate table entry for the model: tokens counted, cost unpriced.
+      assert.strictEqual(acp.costSource, "unpriced");
+      assert.strictEqual(acp.costUsd, 0);
+      assert.strictEqual(acp.unpricedRecords, 1);
+      assert.strictEqual(acp.sessions, 1);
+
+      const pi = summary.buckets.find((bucket) => bucket.provider === "pi");
+      assert.ok(pi, "the Pi bucket must appear");
+      assert.deepStrictEqual(pi.totals, {
+        uncachedInputTokens: 300,
+        cachedInputTokens: 100,
+        cacheCreationTokens: 0,
+        outputTokens: 90,
+        reasoningTokens: 0,
+      });
+      assert.strictEqual(pi.costSource, "unpriced");
+
+      const acpSource = summary.sources.find(
+        (source) => source.fingerprint.provider === "acpRegistry",
+      );
+      assert.ok(acpSource);
+      assert.strictEqual(acpSource.fingerprint.resolvedHomePath, "t3-usage:workbuddy");
+      assert.strictEqual(acpSource.distinctSessions, 1);
     }).pipe(Effect.scoped),
   );
 });

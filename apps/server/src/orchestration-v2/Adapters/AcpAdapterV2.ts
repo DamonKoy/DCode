@@ -31,6 +31,7 @@ import {
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -435,6 +436,35 @@ export interface AcpAdapterV2Flavor {
    * false; without this override, screenshot turns fail before `session/prompt`.
    */
   readonly supportsImagePrompts?: boolean;
+}
+
+/**
+ * Normalizes the ACP idle `state_update.usage` payload into the shared
+ * per-turn usage shape. ACP always reports total input and output, so a
+ * non-zero report is `complete`; a report with no tokens at all is
+ * `unavailable` rather than a fabricated zero. `cachedWriteTokens` maps to
+ * `cacheCreationTokens`, which only the per-turn shape carries.
+ */
+export function acpTurnTokenUsage(
+  usage: EffectAcpSchema.Usage,
+  hasSubagents: boolean,
+): TurnTokenUsage {
+  const inputTokens = usage.inputTokens;
+  const outputTokens = usage.outputTokens;
+  const cachedInputTokens = usage.cachedReadTokens ?? undefined;
+  const cacheCreationTokens = usage.cachedWriteTokens ?? undefined;
+  const reasoningTokens = usage.thoughtTokens ?? undefined;
+  const common = {
+    usageScope: "main_agent" as const,
+    hasSubagents,
+    ...(cachedInputTokens === undefined ? {} : { cachedInputTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
+  if (inputTokens === 0 && outputTokens === 0) {
+    return { ...common, usageStatus: "unavailable" };
+  }
+  return { ...common, usageStatus: "complete", inputTokens, outputTokens };
 }
 
 /** Whether image attachment blocks may be included in session/prompt. */
@@ -1166,6 +1196,12 @@ interface ActiveAcpTurn {
       }
     | undefined;
   contextUsage: ThreadTokenUsageSnapshot | null;
+  /**
+   * Normalized main-agent usage for this turn, captured from the last ACP idle
+   * `state_update`. ACP reports foreground usage on completion, so the settled
+   * turn carries it on `provider_turn.updated` for the per-turn Usage path.
+   */
+  turnTokenUsage: TurnTokenUsage | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
@@ -4143,6 +4179,18 @@ export function makeAcpAdapterV2(
               );
               if (context?.nativeThreadId === notification.sessionId) {
                 context.contextUsage = stateEvent.usage;
+                // ACP reports foreground usage on the idle transition, so the
+                // root session's idle update is this turn's normalized usage.
+                if (
+                  update.sessionUpdate === "state_update" &&
+                  update.state === "idle" &&
+                  update.usage != null
+                ) {
+                  context.turnTokenUsage = acpTurnTokenUsage(
+                    update.usage,
+                    context.subagents.size > 0,
+                  );
+                }
               }
             } else {
               const metadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
@@ -6563,6 +6611,9 @@ export function makeAcpAdapterV2(
           context: ActiveAcpTurn,
           status: OrchestrationV2ProviderTurn["status"],
           completedAt: DateTime.Utc | null,
+          // Settled turns carry the ACP-reported context snapshot and the
+          // normalized per-turn usage; running updates leave both off.
+          usage?: Pick<OrchestrationV2ProviderTurn, "tokenUsage" | "turnTokenUsage">,
         ): OrchestrationV2ProviderTurn => ({
           id: context.providerTurnId,
           providerThreadId: context.input.providerThread.id,
@@ -6577,6 +6628,8 @@ export function makeAcpAdapterV2(
           status,
           startedAt: context.startedAt,
           completedAt,
+          ...(usage?.tokenUsage === undefined ? {} : { tokenUsage: usage.tokenUsage }),
+          ...(usage?.turnTokenUsage === undefined ? {} : { turnTokenUsage: usage.turnTokenUsage }),
         });
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
@@ -6700,7 +6753,39 @@ export function makeAcpAdapterV2(
               },
             });
           }
-          const turn = providerTurnPayload(context, settledStatus, now);
+          const settledContextUsage = context.contextUsage;
+          const settledTokenUsage =
+            settledContextUsage !== null && settledContextUsage.usedTokens > 0
+              ? {
+                  usedTokens: settledContextUsage.usedTokens,
+                  ...(settledContextUsage.maxTokens === undefined
+                    ? {}
+                    : { maxTokens: settledContextUsage.maxTokens }),
+                  ...(settledContextUsage.inputTokens === undefined
+                    ? {}
+                    : { inputTokens: settledContextUsage.inputTokens }),
+                  ...(settledContextUsage.cachedInputTokens === undefined
+                    ? {}
+                    : { cachedInputTokens: settledContextUsage.cachedInputTokens }),
+                  ...(settledContextUsage.outputTokens === undefined
+                    ? {}
+                    : { outputTokens: settledContextUsage.outputTokens }),
+                  ...(settledContextUsage.reasoningOutputTokens === undefined
+                    ? {}
+                    : { reasoningOutputTokens: settledContextUsage.reasoningOutputTokens }),
+                  updatedAt: DateTime.formatIso(now),
+                }
+              : undefined;
+          const settledUsage =
+            settledTokenUsage === undefined && context.turnTokenUsage === null
+              ? undefined
+              : {
+                  ...(settledTokenUsage === undefined ? {} : { tokenUsage: settledTokenUsage }),
+                  ...(context.turnTokenUsage === null
+                    ? {}
+                    : { turnTokenUsage: context.turnTokenUsage }),
+                };
+          const turn = providerTurnPayload(context, settledStatus, now, settledUsage);
           yield* Ref.update(providerTurns, (current) => {
             const updated = new Map(current);
             updated.set(String(turn.id), turn);
@@ -7074,6 +7159,7 @@ export function makeAcpAdapterV2(
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
+              turnTokenUsage: null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               toolStartedAt: new Map(),

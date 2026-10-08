@@ -41,6 +41,18 @@ export const PROVIDER_PRESENTATION = {
     color: "#8c7bd1",
     driverKind: ProviderDriverKind.make("antigravity"),
   },
+  pi: {
+    label: "Pi",
+    color: "#c0a3e8",
+    driverKind: ProviderDriverKind.make("pi"),
+  },
+  acpRegistry: {
+    // Every configured ACP registry instance (workbuddy, devin, …) shares this
+    // driver, so the label stays provider-neutral.
+    label: "ACP",
+    color: "#7aa2f7",
+    driverKind: ProviderDriverKind.make("acpRegistry"),
+  },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */

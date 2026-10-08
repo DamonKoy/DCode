@@ -31,6 +31,11 @@ export const USAGE_CONTRACT_VERSION = 6 as const;
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
+/**
+ * Providers the Usage page can attribute. File-scanned providers carry their
+ * native transcript; `pi` and `acpRegistry` are read from DCode's own persisted
+ * per-turn usage because their native sessions are not scanned.
+ */
 export const UsageProviderKind = Schema.Literals([
   "claude",
   "codex",
@@ -38,6 +43,8 @@ export const UsageProviderKind = Schema.Literals([
   "cursor",
   "opencode",
   "antigravity",
+  "pi",
+  "acpRegistry",
 ]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
