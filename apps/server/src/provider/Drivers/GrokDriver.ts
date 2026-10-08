@@ -34,9 +34,9 @@ import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment
 import { discoverGrokSkills } from "./GrokSkills.ts";
 import {
   makeCachedProviderMaintenanceResolution,
-  makeManualOnlyProviderMaintenanceCapabilities,
-  makeProviderMaintenanceCapabilities,
+  type PackageManagedProviderMaintenanceDefinition,
   type ProviderMaintenanceCapabilitiesResolver,
+  resolvePackageManagedProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
@@ -50,27 +50,32 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm's `latest` tracks Grok's stable channel, the one `grok update` installs
 // by default, so the registry stays the source for "latest".
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` finds the installer that owns the binary itself, so the
-// resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. No executable means nothing to update,
-// not "whatever is on PATH".
+// Grok ships both an npm package and its own installer. The shared resolver
+// picks the command that matches the resolved binary's owner: an npm global
+// install upgrades through npm, so the advisory's npm `latest` and the command
+// that runs agree; the x.ai installer keeps `grok update`, which detects its
+// own installer. Skipping the ownership probe (the old inline resolver) always
+// ran `grok update`, which does not upgrade an npm-owned tree and left the
+// runner reporting `unchanged`.
+const GROK_MAINTENANCE: PackageManagedProviderMaintenanceDefinition = {
+  provider: DRIVER_KIND,
+  npmPackageName: GROK_NPM_PACKAGE,
+  nativeUpdate: { args: ["update"] },
+};
+// `grok update` installs under the instance's home (`GROK_HOME`), so the
+// updater must run with the instance's environment; the shared resolver only
+// carries a static one. Only the native command needs it — the npm command
+// resolves its own prefix.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (context) =>
-    Effect.succeed(
-      context
-        ? makeProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["update"],
-            updateLockKey: "grok",
-            platform: context.platform,
-            env: context.env,
-          })
-        : makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-          }),
+    resolvePackageManagedProviderMaintenance(GROK_MAINTENANCE, context).pipe(
+      Effect.map((capabilities) => {
+        const update = capabilities.update;
+        if (!context || !update || update.executable !== context.resolvedCommandPath) {
+          return capabilities;
+        }
+        return { ...capabilities, update: { ...update, env: context.env } };
+      }),
     ),
 };
 
