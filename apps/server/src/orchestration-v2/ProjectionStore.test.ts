@@ -2219,6 +2219,101 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("projects a provider-native child's runless root turn into SQL and memory shells", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const parentThreadId = ThreadId.make("thread:native-child:parent");
+      const childThreadId = ThreadId.make("thread:native-child:worker");
+      const rootNodeId = NodeId.make("node:native-child:child-root");
+      yield* store.apply({
+        id: EventId.make("event:native-child:thread-created"),
+        type: "thread.created",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "agent",
+          creationSource: "provider",
+          id: childThreadId,
+          projectId: ProjectId.make("project:native-child"),
+          title: "worker-A",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId,
+            relationshipToParent: "subagent",
+            rootThreadId: parentThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const applyRoot = (status: "running" | "completed" | "cancelled") =>
+        store.apply({
+          id: EventId.make(`event:native-child:root:${status}`),
+          type: "node.updated",
+          threadId: childThreadId,
+          nodeId: rootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: rootNodeId,
+            threadId: childThreadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId,
+            kind: "root_turn",
+            status,
+            countsForRun: false,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: status === "running" ? null : now,
+          },
+        });
+      const assertChild = Effect.fnUntraced(function* (
+        status: "running" | "completed" | "cancelled",
+      ) {
+        const memoryShell = ProjectionStore.threadShellFromProjection(
+          yield* store.getThreadProjection(childThreadId),
+        );
+        const sqlShell = (yield* store.getShellSnapshot()).threads.find(
+          (row) => row.id === childThreadId,
+        )!;
+        for (const shell of [memoryShell, sqlShell]) {
+          // The child owns no run, so the shell status itself stays idle.
+          assert.equal(shell.status, "idle");
+          assert.equal(shell.providerChildStatus, status);
+          assert.equal(
+            shell.providerChildCompletedAt === null || shell.providerChildCompletedAt === undefined,
+            status === "running",
+          );
+        }
+      });
+      yield* applyRoot("running");
+      yield* assertChild("running");
+      yield* applyRoot("completed");
+      yield* assertChild("completed");
+      yield* applyRoot("cancelled");
+      yield* assertChild("cancelled");
+    }),
+  );
+
   it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

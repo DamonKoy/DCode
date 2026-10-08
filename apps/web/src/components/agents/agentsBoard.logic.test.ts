@@ -82,8 +82,9 @@ describe("agentsBoardColumnForStatus", () => {
     expect(agentsBoardColumnForStatus("interrupted")).toBe("failed");
   });
 
-  it("files idle under done rather than claiming it is running", () => {
-    expect(agentsBoardColumnForStatus("idle")).toBe("done");
+  it("never files idle under done: an idle worker is not finished work", () => {
+    expect(agentsBoardColumnForStatus("idle")).toBe("waiting");
+    expect(agentsBoardColumnForStatus("idle")).not.toBe("done");
   });
 });
 

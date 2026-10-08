@@ -76,15 +76,16 @@ type StatusBearingRow = { readonly agent: { readonly status: RuntimeSubagentStat
  */
 
 /**
- * Idle is neither running nor finished, so it lands in Done and the card's own
- * status label keeps it honest — an idle row must never read as completed work.
+ * Idle is neither running nor finished. Filing it under Done made a board of
+ * live-but-quiet workers read "Done (5)" with every card saying "Idle", so it
+ * waits alongside work parked on the user; only completed work is Done.
  */
 export function agentsBoardColumnForStatus(status: RuntimeSubagentStatus): AgentsBoardColumnId {
   switch (status) {
     case "waiting":
+    case "idle":
       return "waiting";
     case "completed":
-    case "idle":
       return "done";
     case "failed":
     case "cancelled":
@@ -124,6 +125,7 @@ function withChildThreadRun(
 
 const SHELL_STATUS_TO_SUBAGENT_STATUS: Readonly<Record<string, RuntimeSubagentStatus>> = {
   idle: "idle",
+  pending: "pending",
   preparing: "running",
   queued: "pending",
   starting: "running",
@@ -144,6 +146,14 @@ const SHELL_STATUS_TO_SUBAGENT_STATUS: Readonly<Record<string, RuntimeSubagentSt
 export function runtimeSubagentFromThread(thread: OrchestrationV2ThreadShell): RuntimeSubagent {
   const updatedAt = DateTime.formatIso(thread.updatedAt);
   const startedAt = thread.activityRunStartedAt ?? thread.latestRunStartedAt ?? null;
+  // A provider-native child never owns a run, so its shell status is always
+  // idle; the status of its own root turn is the real one.
+  const providerChildStatus =
+    thread.latestRunId === null ? (thread.providerChildStatus ?? null) : null;
+  const completedAtSource =
+    providerChildStatus === null
+      ? thread.latestRunCompletedAt
+      : (thread.providerChildCompletedAt ?? null);
   return {
     id: thread.id,
     kind: "subagent",
@@ -151,7 +161,7 @@ export function runtimeSubagentFromThread(thread: OrchestrationV2ThreadShell): R
     role: null,
     model: thread.modelSelection.model,
     effort: null,
-    status: SHELL_STATUS_TO_SUBAGENT_STATUS[thread.status] ?? "idle",
+    status: SHELL_STATUS_TO_SUBAGENT_STATUS[providerChildStatus ?? thread.status] ?? "idle",
     activationCount: 1,
     usage: null,
     progress: null,
@@ -171,9 +181,9 @@ export function runtimeSubagentFromThread(thread: OrchestrationV2ThreadShell): R
     firstSeenAt: startedAt === null ? updatedAt : DateTime.formatIso(startedAt),
     startedAt: startedAt === null ? null : DateTime.formatIso(startedAt),
     completedAt:
-      thread.latestRunCompletedAt === null || thread.latestRunCompletedAt === undefined
+      completedAtSource === null || completedAtSource === undefined
         ? null
-        : DateTime.formatIso(thread.latestRunCompletedAt),
+        : DateTime.formatIso(completedAtSource),
     updatedAt,
   };
 }

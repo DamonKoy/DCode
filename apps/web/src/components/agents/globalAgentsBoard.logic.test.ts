@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import type { OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
+import { AGENTS_BOARD_STATUS_LABEL_KEYS, groupAgentsBoardRows } from "./agentsBoard.logic.ts";
 import {
   buildGlobalAgentRows,
   globalAgentEnvironmentIds,
@@ -125,5 +126,84 @@ describe("orderGlobalAgentRows", () => {
       "done-new",
       "done-old",
     ]);
+  });
+});
+
+describe("provider-native child threads", () => {
+  /** A worker the provider spawned itself: no app run, status only on its root turn. */
+  function nativeChild(id: string, providerChildStatus: string | null, completedAt?: string) {
+    return thread({
+      id,
+      latestRunId: null,
+      latestRunStartedAt: null,
+      latestRunCompletedAt: null,
+      activeRunId: null,
+      activityRunStartedAt: null,
+      activityRunStatus: null,
+      status: "idle",
+      providerChildStatus,
+      providerChildCompletedAt: completedAt === undefined ? null : iso(completedAt),
+    });
+  }
+
+  it("reads status from the child's root turn instead of the always-idle shell", () => {
+    const rows = buildGlobalAgentRows({
+      threads: [
+        nativeChild("running-worker", "running"),
+        nativeChild("done-worker", "completed", "2026-10-07T10:03:00.000Z"),
+        nativeChild("cancelled-worker", "cancelled", "2026-10-07T10:02:00.000Z"),
+        nativeChild("failed-worker", "failed", "2026-10-07T10:01:00.000Z"),
+      ],
+      projects,
+    });
+    const statusById = Object.fromEntries(rows.map((row) => [row.threadId, row.agent.status]));
+    expect(statusById).toEqual({
+      "running-worker": "running",
+      "done-worker": "completed",
+      "cancelled-worker": "cancelled",
+      "failed-worker": "failed",
+    });
+    expect(rows.find((row) => row.threadId === "done-worker")?.agent.completedAt).toBe(
+      "2026-10-07T10:03:00.000Z",
+    );
+  });
+
+  it("files each worker in the lane its card label names", () => {
+    const rows = buildGlobalAgentRows({
+      threads: [
+        nativeChild("running-worker", "running"),
+        nativeChild("done-worker", "completed", "2026-10-07T10:03:00.000Z"),
+        nativeChild("cancelled-worker", "cancelled", "2026-10-07T10:02:00.000Z"),
+        nativeChild("failed-worker", "failed", "2026-10-07T10:01:00.000Z"),
+        nativeChild("unknown-worker", null),
+      ],
+      projects,
+    });
+    const lanes = Object.fromEntries(
+      groupAgentsBoardRows(rows).map((column) => [
+        column.id,
+        column.rows.map((row) => row.threadId).toSorted(),
+      ]),
+    );
+    expect(lanes).toEqual({
+      working: ["running-worker"],
+      waiting: ["unknown-worker"],
+      done: ["done-worker"],
+      failed: ["cancelled-worker", "failed-worker"],
+    });
+    const labelById = Object.fromEntries(
+      rows.map((row) => [row.threadId, AGENTS_BOARD_STATUS_LABEL_KEYS[row.agent.status]]),
+    );
+    expect(labelById["done-worker"]).toBe("agents.status.completed");
+    expect(labelById["running-worker"]).toBe("agents.status.running");
+    expect(labelById["unknown-worker"]).toBe("agents.status.idle");
+  });
+
+  it("keeps run-owning children on their run status", () => {
+    const rows = buildGlobalAgentRows({
+      threads: [thread({ id: "app-child", providerChildStatus: "completed" })],
+      projects,
+    });
+    expect(rows[0]?.agent.status).toBe("running");
   });
 });
