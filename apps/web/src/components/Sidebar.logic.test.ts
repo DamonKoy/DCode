@@ -45,6 +45,7 @@ import {
   shouldClearThreadSelectionOnMouseDown,
   shouldShowSidebarV2Duration,
   shouldRecedeSidebarThread,
+  sliceSidebarProjectThreads,
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
@@ -1994,6 +1995,22 @@ describe("buildSidebarProjectSections", () => {
 
     expect(sections).toHaveLength(1);
     expect(sections[0]!.threads.map((thread) => thread.id)).toEqual(["a-1"]);
+  });
+});
+
+describe("sliceSidebarProjectThreads", () => {
+  it("keeps every thread when the project fits in one page", () => {
+    expect(sliceSidebarProjectThreads(["a", "b", "c"], 5)).toEqual({
+      visible: ["a", "b", "c"],
+      hiddenCount: 0,
+    });
+  });
+
+  it("keeps the leading page and reports what is left", () => {
+    expect(sliceSidebarProjectThreads(["a", "b", "c", "d"], 2)).toEqual({
+      visible: ["a", "b"],
+      hiddenCount: 2,
+    });
   });
 });
 

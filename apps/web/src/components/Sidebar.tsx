@@ -63,6 +63,7 @@ import {
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
   CheckIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -212,6 +213,7 @@ import {
   sidebarListItemId,
   sidebarMarkerId,
   sidebarThreadKeyAtY,
+  sliceSidebarProjectThreads,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
   sortSidebarV2ProjectGroups,
@@ -294,6 +296,10 @@ const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
+// The grouped layout pages each project for the same reason the settled tail
+// pages: one long history must not push every other project off screen.
+const SIDEBAR_PROJECT_THREAD_INITIAL_COUNT = 5;
+const SIDEBAR_PROJECT_THREAD_PAGE_COUNT = 10;
 // Fresh keys deliberately reset both shelves to collapsed for existing users.
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
@@ -800,10 +806,11 @@ function SidebarSectionHeader(props: {
   );
 }
 
-// A project's header in the grouped ("projects") layout: the project's icon
-// and name, its visible thread count, and the expand/collapse chevron. Not a
+// A project's header in the grouped ("projects") layout, shaped like the
+// sidebar's other navigation rows: icon + name, a chevron on the right, and
+// nothing else competing with the thread rows underneath. Deliberately not a
 // SortableSidebarMarker — project reordering stays a flat-layout affordance,
-// so the header is deliberately outside the drag machinery.
+// so the header sits outside the drag machinery.
 function SidebarProjectHeader(props: {
   project: SidebarProjectSnapshot;
   threadCount: number;
@@ -812,21 +819,24 @@ function SidebarProjectHeader(props: {
 }) {
   return (
     <li className="list-none">
-      <CollapsibleSectionHeader
+      <button
+        type="button"
         onClick={props.onToggle}
-        expanded={props.expanded}
-        tone="muted"
+        aria-expanded={props.expanded}
         data-testid="sidebar-project-header"
         aria-label={`${props.project.displayName}, ${props.threadCount} threads`}
-        accessory={
-          <span className="shrink-0 text-secondary-label tabular-nums">{props.threadCount}</span>
-        }
+        className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-row-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-          <span className="truncate">{props.project.displayName}</span>
-        </span>
-      </CollapsibleSectionHeader>
+        <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{props.project.displayName}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 text-sidebar-muted-foreground/50 transition-transform",
+            props.expanded && "rotate-90",
+          )}
+        />
+      </button>
     </li>
   );
 }
@@ -1155,6 +1165,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // The grouped ("projects") layout already names the project in the section
   // header, so its rows drop the repeating icon + label.
   hideProjectLabel?: boolean;
+  // ...and step in one level, so a project reads as a parent of its rows.
+  indent?: boolean;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
@@ -1790,6 +1802,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         className={cn(
           // Matches the h-9 row so unrendered rows never shift the list when they paint.
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_36px]",
+          props.indent && "ml-4",
           sortable?.isDragging && "relative z-20",
         )}
       >
@@ -1958,6 +1971,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       className={cn(
         // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        props.indent && "ml-4",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -2869,6 +2883,19 @@ export default function Sidebar() {
     workingShelfEnabled,
   ]);
 
+  // How many threads each expanded project shows. Session-scoped on purpose:
+  // the rows behind "show more" are a reading convenience, not a preference.
+  const [projectThreadLimits, setProjectThreadLimits] = useState<Record<string, number>>({});
+  const showMoreProjectThreads = useCallback(
+    (projectKey: string) =>
+      setProjectThreadLimits((limits) => ({
+        ...limits,
+        [projectKey]:
+          (limits[projectKey] ?? SIDEBAR_PROJECT_THREAD_INITIAL_COUNT) +
+          SIDEBAR_PROJECT_THREAD_PAGE_COUNT,
+      })),
+    [],
+  );
   // The grouped ("projects") layout nests every visible thread under its
   // project header instead of the lifecycle shelves. It deliberately reads the
   // UNCAPPED thread lists: the shelves' collapse state and "Show more" tails
@@ -3826,12 +3853,23 @@ export default function Sidebar() {
         // A collapsed project contributes its header only, so its rows never
         // enter the measured order and cannot animate in behind the header.
         if (!section.expanded) continue;
-        for (const thread of section.threads) {
+        const { visible, hiddenCount } = sliceSidebarProjectThreads(
+          section.threads,
+          projectThreadLimits[section.projectKey] ?? SIDEBAR_PROJECT_THREAD_INITIAL_COUNT,
+        );
+        for (const thread of visible) {
           const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
           groupedItems.push({
             kind: "thread",
             key,
             section: sectionByThreadKey.get(key) ?? "active",
+          });
+        }
+        if (hiddenCount > 0) {
+          groupedItems.push({
+            kind: "project-more",
+            projectKey: section.projectKey,
+            hiddenCount,
           });
         }
       }
@@ -3871,6 +3909,7 @@ export default function Sidebar() {
     activeThreads,
     groupedProjectSections,
     pinnedThreads,
+    projectThreadLimits,
     renderedSettledThreads,
     sectionByThreadKey,
     settledThreads.length,
@@ -3898,6 +3937,7 @@ export default function Sidebar() {
         .map((item) => {
           if (item.kind === "thread") return `${item.key}:${item.section}`;
           if (item.kind === "project") return `${item.projectKey}:${item.threadCount}`;
+          if (item.kind === "project-more") return `${item.projectKey}:more:${item.hiddenCount}`;
           return item.marker;
         })
         .join("\0"),
@@ -5314,6 +5354,7 @@ export default function Sidebar() {
                               null
                             }
                             hideProjectLabel={groupedByProject}
+                            indent={groupedByProject}
                             projectDisplayName={
                               projectDisplayNameByKey.get(
                                 `${thread.environmentId}:${thread.projectId}`,
@@ -5408,6 +5449,26 @@ export default function Sidebar() {
                               />,
                             );
                           }
+                          continue;
+                        }
+                        if (item.kind === "project-more") {
+                          items.push(
+                            <li key={`project-more:${item.projectKey}`} className="list-none">
+                              <button
+                                type="button"
+                                onClick={() => showMoreProjectThreads(item.projectKey)}
+                                data-testid="sidebar-project-more"
+                                className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md pl-6 pr-2 text-left text-xs text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                              >
+                                <PlusIcon aria-hidden className="size-3 shrink-0" />
+                                Show {Math.min(
+                                  item.hiddenCount,
+                                  SIDEBAR_PROJECT_THREAD_PAGE_COUNT,
+                                )}{" "}
+                                more
+                              </button>
+                            </li>,
+                          );
                           continue;
                         }
                         switch (item.marker) {

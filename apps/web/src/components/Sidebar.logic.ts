@@ -175,6 +175,12 @@ export type SidebarListItem =
       readonly projectKey: string;
       readonly displayName: string;
       readonly threadCount: number;
+    }
+  /** The rest of a project's threads, one page per activation. */
+  | {
+      readonly kind: "project-more";
+      readonly projectKey: string;
+      readonly hiddenCount: number;
     };
 
 /** Project header ids stay colon-free like markers so no scoped thread key
@@ -187,6 +193,8 @@ export function sidebarListItemId(item: SidebarListItem): string {
       return item.key;
     case "project":
       return `${SIDEBAR_PROJECT_PREFIX}${item.projectKey}`;
+    case "project-more":
+      return `${SIDEBAR_PROJECT_PREFIX}more-${item.projectKey}`;
     case "marker":
       return sidebarMarkerId(item.marker);
   }
@@ -1516,4 +1524,18 @@ export function buildSidebarProjectSections<
     sections.push({ project, projectKey: project.projectKey, threads });
   }
   return sections;
+}
+
+/**
+ * Takes the first `visibleCount` threads of a project and reports how many are
+ * left, so the grouped layout can page a long tail behind a "show more" row
+ * instead of dropping it. Nothing is ever silently hidden: `hiddenCount` is
+ * what the row renders.
+ */
+export function sliceSidebarProjectThreads<TThread>(
+  threads: readonly TThread[],
+  visibleCount: number,
+): { readonly visible: readonly TThread[]; readonly hiddenCount: number } {
+  if (threads.length <= visibleCount) return { visible: threads, hiddenCount: 0 };
+  return { visible: threads.slice(0, visibleCount), hiddenCount: threads.length - visibleCount };
 }
