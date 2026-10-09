@@ -162,3 +162,7 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+## DCode fork
+
+This checkout is DCode, a fork that merges upstream T3 Code regularly. Source keeps upstream's "T3 Code" text and the build swaps in the DCode name, so never rename "T3 Code" in source or tests. Read [Syncing with upstream](docs/operations/upstream-sync.md) before merging upstream or touching product-name copy.
