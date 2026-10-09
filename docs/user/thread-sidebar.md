@@ -52,6 +52,16 @@ new one: when the thread has its own worktree, T3 Code asks before removing it,
 and uncommitted changes in it are lost. A thread with a turn in flight cannot
 move until it finishes.
 
+## Group threads by project
+
+On web and desktop, **Settings > General > Sidebar layout > Project groups** lists
+every project with its threads nested underneath, instead of the lifecycle
+sections. Hover a project and click the pencil to start a thread in it, or
+right-click it to filter the sidebar to that project, copy its path, or open its
+settings. A collapsed project shows a colored dot when one of its threads is
+working or waiting for you, and the thread you have open stays visible even when
+its project is collapsed. Threads cannot be dragged in this layout.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
