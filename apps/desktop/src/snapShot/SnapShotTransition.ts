@@ -114,7 +114,7 @@ function createWindow(
     resizable: false,
     show: false,
     skipTaskbar: true,
-    title: "DCode Snapshot Animation",
+    title: "T3 Code Snapshot Animation",
     transparent: true,
     webPreferences: {
       backgroundThrottling: false,

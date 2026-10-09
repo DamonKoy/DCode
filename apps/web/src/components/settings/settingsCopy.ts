@@ -278,7 +278,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Model for source control text and branch or bookmark names. Off uses the environment's text generation model.":
     "用于源代码管理文案，以及分支或书签名。关闭后使用环境的文本生成模型。",
   "No tasks match this environment and project selection.": "当前环境和项目下没有匹配的任务。",
-  "Notices for dependencies, assets, and optional tools used by DCode.":
+  "Notices for dependencies, assets, and optional tools used by T3 Code.":
     "DCode 使用的依赖、资源和可选工具的声明。",
   "One literal argument per row, in launch order.": "每行一个原样参数，按启动顺序排列。",
   "Only the box you write prompts in. Mono works well here.":
@@ -323,11 +323,11 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Resume agent-owned conversations as T3 threads.": "把代理自己的对话恢复成 T3 会话。",
   "Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation.":
     "在报告的重置时间恢复因额度停止的会话。每个会话都可以取消已安排的继续。",
-  "Run only the WSL backend. DCode restarts when this changes.":
+  "Run only the WSL backend. T3 Code restarts when this changes.":
     "只运行 WSL 后端。更改后 DCode 会重启。",
   "Run the selected WSL distro alongside Windows. Projects remain on their current filesystem.":
     "让所选 WSL 发行版和 Windows 一起运行。项目仍留在当前文件系统。",
-  "Selected by DCode.": "由 DCode 选择。",
+  "Selected by T3 Code.": "由 DCode 选择。",
   "Send activity to mobile notifications and Live Activities without T3 Connect.":
     "不经过 T3 Connect，把活动发到手机通知和 Live Activities。",
   "Set how fast panels open and close.": "设置面板打开和关闭的速度。",

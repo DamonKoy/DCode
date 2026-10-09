@@ -2,6 +2,7 @@ import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
+import { productNamePlugin } from "../../scripts/lib/product-name.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 
 const repoEnv = loadRepoEnv();
@@ -54,6 +55,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       define: publicConfigDefine,
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
@@ -71,6 +73,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       define: publicConfigDefine,
       entry: [
         "src/electron/WindowsForegroundFocusWorker.ts",
@@ -92,6 +95,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       entry: ["src/boot.ts", "src/compileCache.ts"],
       clean: false,
       deps: {
@@ -104,6 +108,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       define: publicConfigDefine,
       entry: ["src/preload.ts"],
       deps: {
@@ -119,6 +124,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       entry: ["src/preview-pick-preload.ts"],
       deps: {
         alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
@@ -130,6 +136,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       entry: ["src/preview-pip-preload.ts"],
     },
     {
@@ -139,6 +146,7 @@ export default defineConfig({
       dts: false,
       sourcemap: true,
       outExtensions: () => ({ js: ".cjs" }),
+      plugins: [productNamePlugin()],
       entry: ["src/mac-permission-preload.ts"],
     },
   ],

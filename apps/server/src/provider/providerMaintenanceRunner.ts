@@ -491,7 +491,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   message:
                     targetVersion !== undefined
                       ? "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings."
-                      : "The latest provider version is incompatible with this DCode release. Review provider settings.",
+                      : "The latest provider version is incompatible with this T3 Code release. Review provider settings.",
                 }),
               );
             }
@@ -543,9 +543,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
-                  ? "Update command completed, but DCode could not verify the provider version."
+                  ? "Update command completed, but T3 Code could not verify the provider version."
                   : stillOutdated
-                    ? "Update command completed, but DCode still detects an outdated provider version."
+                    ? "Update command completed, but T3 Code still detects an outdated provider version."
                     : "Provider updated.",
                 output: commandOutput(result),
               }),

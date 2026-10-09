@@ -52,7 +52,7 @@ export function CliCommandSettingsRow() {
   if (!bridge || !state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = !installed
-    ? "Run DCode's CLI as `t3` from any terminal."
+    ? "Run T3 Code's CLI as `t3` from any terminal."
     : state.onPath
       ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
       : `Installed at ${state.installedPath}, which is not on your PATH yet. Add its folder to your PATH to run \`t3\`.`;

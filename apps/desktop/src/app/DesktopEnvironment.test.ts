@@ -14,9 +14,9 @@ const defaultInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "0.0.22",
-  appPath: "/Applications/DCode.app/Contents/Resources/app.asar",
+  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
   isPackaged: false,
-  resourcesPath: "/Applications/DCode.app/Contents/Resources",
+  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 

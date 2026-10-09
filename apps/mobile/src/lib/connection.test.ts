@@ -40,7 +40,7 @@ describe("mobile remote connection records", () => {
 
   it("identifies mobile token exchanges for authorized-client presentation", () => {
     expect(authClientMetadata()).toEqual({
-      label: "DCode Mobile",
+      label: "T3 Code Mobile",
       deviceType: "mobile",
       os: "iOS",
       osMajorVersion: 18,
