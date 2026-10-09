@@ -12,13 +12,14 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { useServerConfigs, useThreadProjection, useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { useI18n } from "../../hooks/useI18n";
 import { AgentCard } from "./AgentCard";
 import { AgentLane } from "./AgentLane";
+import { AgentTaskDetail } from "./AgentTaskDetail";
 import {
   AGENTS_BOARD_COLUMN_LABEL_KEYS,
   buildAgentsBoardRows,
@@ -54,6 +55,14 @@ export function AgentsBoard({ threadRef }: { readonly threadRef: ScopedThreadRef
   const columns = useMemo(() => groupAgentsBoardRows(rows), [rows]);
   const summary = summarizeAgentsBoard(rows);
 
+  // Selecting a row opens its output in this panel instead of navigating. The
+  // board stays mounted underneath, so going back loses no context.
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const selectedRow = useMemo(
+    () => rows.find((row) => row.id === selectedRowId) ?? null,
+    [rows, selectedRowId],
+  );
+
   const openThread = (threadId: string) => {
     void navigate({
       to: "/$environmentId/$threadId",
@@ -69,6 +78,24 @@ export function AgentsBoard({ threadRef }: { readonly threadRef: ScopedThreadRef
           {t("agents.board.empty")}
         </div>
       </div>
+    );
+  }
+
+  if (selectedRow !== null) {
+    const childThreadId = selectedRow.childThreadId;
+    return (
+      <AgentTaskDetail
+        // Remount per row so follow mode and scroll reset between agents.
+        key={selectedRow.id}
+        threadRef={threadRef}
+        agent={selectedRow.agent}
+        driver={selectedRow.driver ?? undefined}
+        provider={providers?.find((entry) => entry.instanceId === selectedRow.providerInstanceId)}
+        childThreadId={childThreadId}
+        onBack={() => setSelectedRowId(null)}
+        onOpenThread={childThreadId === null ? null : () => openThread(childThreadId)}
+        onOpenThreadId={(threadId) => openThread(threadId)}
+      />
     );
   }
 
@@ -100,21 +127,20 @@ export function AgentsBoard({ threadRef }: { readonly threadRef: ScopedThreadRef
               label={t(AGENTS_BOARD_COLUMN_LABEL_KEYS[column.id])}
               count={column.rows.length}
             >
-              {column.rows.map((row) => {
-                const childThreadId = row.childThreadId;
-                return (
-                  <li key={row.id}>
-                    <AgentCard
-                      agent={row.agent}
-                      driver={row.driver ?? undefined}
-                      provider={providers?.find(
-                        (entry) => entry.instanceId === row.providerInstanceId,
-                      )}
-                      onOpen={childThreadId === null ? null : () => openThread(childThreadId)}
-                    />
-                  </li>
-                );
-              })}
+              {column.rows.map((row) => (
+                <li key={row.id}>
+                  <AgentCard
+                    agent={row.agent}
+                    driver={row.driver ?? undefined}
+                    provider={providers?.find(
+                      (entry) => entry.instanceId === row.providerInstanceId,
+                    )}
+                    onOpen={null}
+                    onSelect={() => setSelectedRowId(row.id)}
+                    selected={row.id === selectedRowId}
+                  />
+                </li>
+              ))}
             </AgentLane>
           ),
         )}

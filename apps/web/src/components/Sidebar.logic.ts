@@ -1527,15 +1527,59 @@ export function buildSidebarProjectSections<
 }
 
 /**
- * Takes the first `visibleCount` threads of a project and reports how many are
- * left, so the grouped layout can page a long tail behind a "show more" row
- * instead of dropping it. Nothing is ever silently hidden: `hiddenCount` is
- * what the row renders.
+ * The rows a project renders in the grouped layout, and how many sit behind
+ * its "show more" row. Nothing is ever silently hidden: `hiddenCount` is what
+ * that row renders.
+ *
+ * An expanded project shows its first `visibleCount` threads. A collapsed one
+ * shows nothing. Either way the open thread (`isRouteThread`) stays on screen
+ * — appended past the page, or alone under a collapsed header — matching how
+ * the flat layout's collapsed shelves keep it, so the highlight never vanishes.
  */
 export function sliceSidebarProjectThreads<TThread>(
   threads: readonly TThread[],
-  visibleCount: number,
+  options: {
+    readonly visibleCount: number;
+    readonly expanded: boolean;
+    readonly isRouteThread: (thread: TThread) => boolean;
+  },
 ): { readonly visible: readonly TThread[]; readonly hiddenCount: number } {
-  if (threads.length <= visibleCount) return { visible: threads, hiddenCount: 0 };
-  return { visible: threads.slice(0, visibleCount), hiddenCount: threads.length - visibleCount };
+  if (!options.expanded) {
+    const routeThread = threads.find(options.isRouteThread);
+    return { visible: routeThread === undefined ? [] : [routeThread], hiddenCount: 0 };
+  }
+  if (threads.length <= options.visibleCount) return { visible: threads, hiddenCount: 0 };
+  const visible = threads.slice(0, options.visibleCount);
+  const routeThread = threads.slice(options.visibleCount).find(options.isRouteThread);
+  if (routeThread !== undefined) visible.push(routeThread);
+  return { visible, hiddenCount: threads.length - visible.length };
+}
+
+export type SidebarProjectAttention = "approval" | "input" | "working";
+
+const SIDEBAR_PROJECT_ATTENTION_PRIORITY: Record<SidebarProjectAttention, number> = {
+  approval: 3,
+  input: 2,
+  working: 1,
+};
+
+/**
+ * The most urgent live state among a project's threads, for the dot on a
+ * collapsed project header: a thread waiting on the user outranks one that is
+ * merely working. Settled-looking states (ready, failed, idle) light nothing.
+ */
+export function resolveSidebarProjectAttention(
+  statuses: Iterable<SidebarThreadStatus>,
+): SidebarProjectAttention | null {
+  let attention: SidebarProjectAttention | null = null;
+  for (const status of statuses) {
+    if (status !== "approval" && status !== "input" && status !== "working") continue;
+    if (
+      attention === null ||
+      SIDEBAR_PROJECT_ATTENTION_PRIORITY[status] > SIDEBAR_PROJECT_ATTENTION_PRIORITY[attention]
+    ) {
+      attention = status;
+    }
+  }
+  return attention;
 }

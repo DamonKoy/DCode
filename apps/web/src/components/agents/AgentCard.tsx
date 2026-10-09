@@ -30,6 +30,12 @@ export function AgentCard(props: {
   readonly context?: ReadonlyArray<string>;
   /** Null while the agent has no thread to open. */
   readonly onOpen: (() => void) | null;
+  /**
+   * When provided, clicking selects the card for a same-page detail view
+   * instead of navigating to the agent's thread.
+   */
+  readonly onSelect?: (() => void) | undefined;
+  readonly selected?: boolean | undefined;
 }) {
   const { t } = useI18n();
   const { agent } = props;
@@ -39,17 +45,19 @@ export function AgentCard(props: {
       ? t("agents.card.defaultTitle")
       : formatSubagentDisplayTitle(agent.title);
   const context = (props.context ?? []).filter((part) => part.trim().length > 0);
+  const onClick = props.onSelect ?? props.onOpen;
+  const interactive = onClick !== null;
 
   const card = (
     <button
       type="button"
-      disabled={props.onOpen === null}
-      onClick={props.onOpen ?? undefined}
+      disabled={!interactive}
+      aria-pressed={props.onSelect === undefined ? undefined : props.selected === true}
+      onClick={onClick ?? undefined}
       className={cn(
         "group flex w-full flex-col gap-1 rounded-lg border border-border/60 bg-card px-2 py-1.5 text-left",
-        props.onOpen === null
-          ? "cursor-default"
-          : "cursor-pointer hover:border-border hover:bg-accent/40",
+        !interactive ? "cursor-default" : "cursor-pointer hover:border-border hover:bg-accent/40",
+        props.selected === true && "border-border bg-accent/50",
       )}
     >
       <span className="flex min-w-0 items-center gap-1.5">
@@ -92,7 +100,11 @@ export function AgentCard(props: {
     <Tooltip>
       <TooltipTrigger render={card} />
       <TooltipPopup side="left">
-        {props.onOpen === null ? t("agents.card.noThread") : t("agents.card.openThread")}
+        {props.onSelect !== undefined
+          ? t("agents.card.viewOutput")
+          : props.onOpen === null
+            ? t("agents.card.noThread")
+            : t("agents.card.openThread")}
       </TooltipPopup>
     </Tooltip>
   );

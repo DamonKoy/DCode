@@ -104,6 +104,26 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 For authorized mobile verification, a missing or outdated native client is a build step, not a blocker. Run `node scripts/mobile-native-client.ts ensure <ios|android> <device-id>` on the simulator host before starting Metro. It checks the local Expo fingerprint and builds/installs when needed. See `test-t3-mobile` for the full workflow.
 
+## 桌面打包（本地 `release/`）
+
+`release/` 里的 dmg/zip 是 Koy 手动安装用的本地包。打包不是每轮收尾的默认动作，必须遵守下面四条：
+
+1. **只有 Koy 明确说「打包」才打。** 「落地」「按推荐执行」「继续」「合并」「部署」都不是打包指令；改完代码、合并、推送之后不要顺手打包。
+2. **打包前先查重，有就复用。** 先 `git fetch origin`，确认 HEAD 和 `origin/main` 一致（本地落后就先告诉 Koy，别用旧代码打包），记下 `git rev-parse --short=12 HEAD`。再查 `release/` 里有没有同一提交打的包（包内 `package.json` 带 `t3codeCommitHash`）：
+
+   ```sh
+   for z in release/*.zip; do
+     a=$(unzip -Z1 "$z" | grep -E 'Contents/Resources/app\.asar$' | head -1)
+     printf '%s  ' "$z"
+     unzip -p "$z" "$a" | LC_ALL=C grep -a -o -E '"t3codeCommitHash": ?"[0-9a-f]+"' | head -1
+   done
+   ```
+
+   找到同一 HEAD 的包就直接复用它：报告它的路径、版本号和提交，**不再打新包**。
+
+3. **一个提交只打一个版本号。** 版本号 `0.0.46-preview.<YYYYMMDD>.<序号>` 只在提交变了的时候才往上加；同一提交不能为了改名、「规范命名」或「再确认一次」再占一个新序号。
+4. **不准自己装包，打包后要及时清理。** 不准自己安装或替换 `/Applications` 里的 DCode（也不重启正在运行的 DCode），安装由 Koy 拍板。打完（或复用）后报告产物路径、版本号和提交，并及时清理打包后不需要的内容：`release/` 里被新包取代的旧包（每个提交只留最新的一个，正在安装的版本和刚打的新包必须保留）、打包时挂载后残留的安装盘（`hdiutil detach`）、打包产生的临时 stage 目录和 `/tmp` 里的临时文件。清理一律 `mv` 进 `~/.Trash`，禁止 `rm`；清理完报告挪走了哪些文件。
+
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.

@@ -667,6 +667,17 @@ export class DesktopBuildNoArtifactsProducedError extends Schema.TaggedError<Des
   }
 }
 
+export class DesktopArtifactAlreadyExistsError extends Schema.TaggedError<DesktopArtifactAlreadyExistsError>()(
+  "DesktopArtifactAlreadyExistsError",
+  {
+    artifactPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `[desktop-artifact] ${this.artifactPath} 已存在：换一个 --build-version，或直接复用现有包`;
+  }
+}
+
 export class WslRuntimeArchiveMissingError extends Schema.TaggedError<WslRuntimeArchiveMissingError>()(
   "WslRuntimeArchiveMissingError",
   {
@@ -3925,6 +3936,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
+
+  // Refuse to overwrite an existing local package. Reusing a --build-version
+  // would silently replace an artifact that may already be verified or installed.
+  for (const entry of stageEntries) {
+    if (entry === "builder-debug.yml") continue;
+    const from = path.join(stageDistDir, entry);
+    const stat = yield* fs.stat(from).pipe(Effect.orElseSucceed(() => null));
+    if (!stat || stat.type !== "File") continue;
+
+    const to = path.join(options.outputDir, entry);
+    if (yield* fs.exists(to)) {
+      return yield* new DesktopArtifactAlreadyExistsError({ artifactPath: to });
+    }
+  }
 
   const copiedArtifacts: string[] = [];
   for (const entry of stageEntries) {

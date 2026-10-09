@@ -184,6 +184,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
+  buildProjectHeaderMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
@@ -212,7 +213,9 @@ import {
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
+  resolveSidebarProjectAttention,
   resolveSidebarThreadStatus,
+  type SidebarProjectAttention,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -837,29 +840,84 @@ function SidebarSectionHeader(props: {
   );
 }
 
+// Dot colors follow the row status hues (amber approval, indigo input, sky
+// working) so a collapsed project reads the same as the row it stands for.
+const projectAttentionDotClassName: Record<SidebarProjectAttention, string> = {
+  approval: "bg-amber-500 dark:bg-amber-300/90",
+  input: "bg-indigo-500 dark:bg-indigo-300/90",
+  working: "bg-sky-500 dark:bg-sky-300/90",
+};
+
 // A project's header in the grouped ("projects") layout, shaped like the
-// sidebar's other navigation rows: icon + name, a chevron on the right, and
-// nothing else competing with the thread rows underneath. Deliberately not a
-// SortableSidebarMarker — project reordering stays a flat-layout affordance,
-// so the header sits outside the drag machinery.
+// sidebar's other navigation rows: icon + name, a chevron on the right. A
+// collapsed project carries a status dot for its most urgent thread, so
+// collapsing never hides a thread that is waiting on the user. The new-thread
+// button fades in on hover (always shown on touch), and right-click opens the
+// project menu. Deliberately not a SortableSidebarMarker — project reordering
+// stays a flat-layout affordance, so the header sits outside the drag
+// machinery.
 function SidebarProjectHeader(props: {
   project: SidebarProjectSnapshot;
   threadCount: number;
   expanded: boolean;
+  /** Set only while collapsed; an expanded project shows its rows instead. */
+  attention: SidebarProjectAttention | null;
+  environmentMachine: EnvironmentMachineKind | null;
   onToggle: () => void;
+  onNewThread: (project: SidebarProjectSnapshot) => void;
+  onContextMenu: (project: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
 }) {
+  const { t } = useI18n();
+  const { project, onNewThread, onContextMenu } = props;
+  const newThreadLabel = t("sidebar.newThreadInProject", { project: project.displayName });
+  const attention = props.attention;
   return (
-    <li className="list-none">
+    <li
+      className="group/project-header relative list-none"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onContextMenu(project, { x: event.clientX, y: event.clientY });
+      }}
+    >
       <button
         type="button"
         onClick={props.onToggle}
         aria-expanded={props.expanded}
         data-testid="sidebar-project-header"
-        aria-label={`${props.project.displayName}, ${props.threadCount} threads`}
+        aria-label={t("sidebar.projectThreadCount", {
+          project: project.displayName,
+          count: props.threadCount,
+        })}
         className="flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/80 transition-colors hover:bg-sidebar-row-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{props.project.displayName}</span>
+        <ProjectFavicon project={project} className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+        {attention !== null ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  role="img"
+                  aria-label={t(`sidebar.projectAttention.${attention}`)}
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    projectAttentionDotClassName[attention],
+                  )}
+                />
+              }
+            />
+            <TooltipPopup side="top">{t(`sidebar.projectAttention.${attention}`)}</TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {props.environmentMachine !== null ? (
+          <EnvironmentMachineIcon
+            aria-hidden
+            kind={props.environmentMachine}
+            className="size-3.5 shrink-0 text-sidebar-muted-foreground/70"
+          />
+        ) : null}
+        {/* Keeps the name and badges clear of the overlaid new-thread button. */}
+        <span aria-hidden className="w-5 shrink-0" />
         <ChevronRightIcon
           aria-hidden
           className={cn(
@@ -868,6 +926,24 @@ function SidebarProjectHeader(props: {
           )}
         />
       </button>
+      <div className="pointer-events-none absolute top-1/2 right-6 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={newThreadLabel}
+                data-testid="sidebar-project-new-thread"
+                onClick={() => onNewThread(project)}
+              />
+            }
+          >
+            <SquarePenIcon aria-hidden className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">{newThreadLabel}</TooltipPopup>
+        </Tooltip>
+      </div>
     </li>
   );
 }
@@ -2975,9 +3051,15 @@ export default function Sidebar() {
   // project header instead of the lifecycle shelves. It deliberately reads the
   // UNCAPPED thread lists: the shelves' collapse state and "Show more" tails
   // are flat-layout paging, and a project's rows must not hide behind a header
-  // the grouped layout does not render.
+  // the grouped layout does not render. Every project gets a header, even an
+  // empty one, so a new project is visible and one click from its first thread.
+  // `visibleThreads` is exactly what renders under the header; the ordered
+  // list below reads it, so jump hints and range selection only ever address
+  // rows that are on screen.
   const groupedProjectSections = useMemo(() => {
     if (!groupedByProject) return null;
+    const isRouteThread = (thread: EnvironmentThreadShell) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey;
     return buildSidebarProjectSections({
       projects: scopedProjectGroup === null ? projectGroups : [scopedProjectGroup],
       threads: [
@@ -2987,19 +3069,37 @@ export default function Sidebar() {
         ...snoozedThreads,
         ...settledThreads,
       ],
-    }).map((section) => ({
-      ...section,
-      expanded: resolveProjectExpanded(
+      includeEmptyProjects: true,
+    }).map((section) => {
+      const expanded = resolveProjectExpanded(
         projectExpandedById,
         projectExpansionPreferenceKeys(section.project),
-      ),
-    }));
+      );
+      const { visible, hiddenCount } = sliceSidebarProjectThreads(section.threads, {
+        visibleCount:
+          projectThreadLimits[section.projectKey] ?? SIDEBAR_PROJECT_THREAD_INITIAL_COUNT,
+        expanded,
+        isRouteThread,
+      });
+      return {
+        ...section,
+        expanded,
+        visibleThreads: visible,
+        hiddenCount,
+        // Only a collapsed header shows the dot; an expanded one has its rows.
+        attention: expanded
+          ? null
+          : resolveSidebarProjectAttention(section.threads.map(resolveSidebarThreadStatus)),
+      };
+    });
   }, [
     activeThreads,
     groupedByProject,
     pinnedThreads,
     projectExpandedById,
     projectGroups,
+    projectThreadLimits,
+    routeThreadKey,
     scopedProjectGroup,
     settledThreads,
     snoozedThreads,
@@ -3189,9 +3289,7 @@ export default function Sidebar() {
             ...visibleSnoozedThreads,
             ...renderedSettledThreads,
           ]
-        : groupedProjectSections.flatMap((section) =>
-            section.expanded ? [...section.threads] : [],
-          ),
+        : groupedProjectSections.flatMap((section) => section.visibleThreads),
     [
       pinnedThreads,
       activeThreads,
@@ -3927,14 +4025,10 @@ export default function Sidebar() {
           displayName: section.project.displayName,
           threadCount: section.threads.length,
         });
-        // A collapsed project contributes its header only, so its rows never
-        // enter the measured order and cannot animate in behind the header.
-        if (!section.expanded) continue;
-        const { visible, hiddenCount } = sliceSidebarProjectThreads(
-          section.threads,
-          projectThreadLimits[section.projectKey] ?? SIDEBAR_PROJECT_THREAD_INITIAL_COUNT,
-        );
-        for (const thread of visible) {
+        // A collapsed project contributes its header (plus the open thread, if
+        // it lives there), so hidden rows never enter the measured order and
+        // cannot animate in behind the header.
+        for (const thread of section.visibleThreads) {
           const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
           groupedItems.push({
             kind: "thread",
@@ -3942,11 +4036,11 @@ export default function Sidebar() {
             section: sectionByThreadKey.get(key) ?? "active",
           });
         }
-        if (hiddenCount > 0) {
+        if (section.hiddenCount > 0) {
           groupedItems.push({
             kind: "project-more",
             projectKey: section.projectKey,
-            hiddenCount,
+            hiddenCount: section.hiddenCount,
           });
         }
       }
@@ -3986,7 +4080,6 @@ export default function Sidebar() {
     activeThreads,
     groupedProjectSections,
     pinnedThreads,
-    projectThreadLimits,
     renderedSettledThreads,
     sectionByThreadKey,
     settledThreads.length,
@@ -4684,6 +4777,58 @@ export default function Sidebar() {
       settleThreads,
       updateThreadMetadata,
       timestampFormat,
+    ],
+  );
+
+  const handleProjectNewThread = useCallback(
+    (projectGroup: SidebarProjectSnapshot) => {
+      if (isMobile) setOpenMobile(false);
+      void handleNewThreadRef.current(scopeProjectRef(projectGroup.environmentId, projectGroup.id));
+    },
+    [isMobile, setOpenMobile],
+  );
+
+  const handleProjectHeaderContextMenu = useCallback(
+    (projectGroup: SidebarProjectSnapshot, position: { x: number; y: number }) => {
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const isFiltered = projectScopeKey === projectGroup.projectKey;
+        const workspacePath = projectGroup.workspaceRoot;
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            buildProjectHeaderMenuItems({
+              projectLabel: projectGroup.displayName,
+              isFiltered,
+              hasPath: workspacePath.length > 0,
+            }),
+            position,
+          ),
+        );
+        if (clicked._tag === "Failure") return;
+        switch (clicked.value) {
+          case "new-thread":
+            handleProjectNewThread(projectGroup);
+            return;
+          case "filter-by-project":
+            // Picking the already-scoped project again is the way back out.
+            setProjectScopeKey(isFiltered ? null : projectGroup.projectKey);
+            return;
+          case "copy-path":
+            copyPathToClipboard(workspacePath, { path: workspacePath });
+            return;
+          case "project-settings":
+            openProjectSettings(projectGroup);
+            return;
+        }
+      })();
+    },
+    [
+      copyPathToClipboard,
+      handleProjectNewThread,
+      openProjectSettings,
+      projectScopeKey,
+      setProjectScopeKey,
     ],
   );
 
@@ -5626,9 +5771,18 @@ export default function Sidebar() {
                                 project={section.project}
                                 threadCount={item.threadCount}
                                 expanded={section.expanded}
+                                attention={section.attention}
+                                environmentMachine={
+                                  section.project.environmentPresence === "remote-only"
+                                    ? (environmentMachineById.get(section.project.environmentId) ??
+                                      "server")
+                                    : null
+                                }
                                 onToggle={() =>
                                   setProjectExpanded(preferenceKeys, !section.expanded)
                                 }
+                                onNewThread={handleProjectNewThread}
+                                onContextMenu={handleProjectHeaderContextMenu}
                               />,
                             );
                           }
@@ -5644,11 +5798,12 @@ export default function Sidebar() {
                                 className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md pl-6 pr-2 text-left text-xs text-sidebar-muted-foreground/70 transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                               >
                                 <PlusIcon aria-hidden className="size-3 shrink-0" />
-                                Show {Math.min(
-                                  item.hiddenCount,
-                                  SIDEBAR_PROJECT_THREAD_PAGE_COUNT,
-                                )}{" "}
-                                more
+                                {t("sidebar.showMore", {
+                                  count: Math.min(
+                                    item.hiddenCount,
+                                    SIDEBAR_PROJECT_THREAD_PAGE_COUNT,
+                                  ),
+                                })}
                               </button>
                             </li>,
                           );
@@ -5775,7 +5930,8 @@ export default function Sidebar() {
                       }
                       return items;
                     })()}
-                    {settledShelfExpanded && hiddenSettledCount > 0 ? (
+                    {/* Flat-layout paging only: grouped projects page their own rows. */}
+                    {!groupedByProject && settledShelfExpanded && hiddenSettledCount > 0 ? (
                       <li className="list-none">
                         <button
                           type="button"
@@ -5783,7 +5939,9 @@ export default function Sidebar() {
                           className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                         >
                           <PlusIcon aria-hidden className="size-4 shrink-0" />
-                          Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                          {t("sidebar.showMore", {
+                            count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
+                          })}
                         </button>
                       </li>
                     ) : null}
@@ -5792,8 +5950,11 @@ export default function Sidebar() {
               </DndContext>
             </TooltipProvider>
           ) : null}
+          {/* The grouped layout lists every project, empty ones included, so
+              it only needs this placeholder when there is no project at all. */}
           {!isSearchingThreads &&
           visibleDraftSessionCount === 0 &&
+          (!groupedByProject || projects.length === 0) &&
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
@@ -5803,20 +5964,20 @@ export default function Sidebar() {
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
               {projects.length === 0 ? (
                 <>
-                  <span>No projects yet</span>
+                  <span>{t("sidebar.noProjects")}</span>
                   <button
                     type="button"
                     onClick={openAddProjectCommandPalette}
                     className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
-                    Add project
+                    {t("sidebar.addProject")}
                   </button>
                 </>
               ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
+                t("sidebar.noThreadsInProject", { project: scopedProjectGroup.displayName })
               ) : (
-                "No threads yet"
+                t("sidebar.noThreads")
               )}
             </div>
           ) : null}

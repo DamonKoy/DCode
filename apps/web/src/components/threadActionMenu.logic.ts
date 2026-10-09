@@ -39,6 +39,32 @@ export type DraftActionMenuId =
   | "project-settings"
   | "discard";
 
+export type ProjectHeaderMenuId =
+  | "new-thread"
+  | "filter-by-project"
+  | "copy-path"
+  | "project-settings";
+
+/** Right-click menu for a project header in the grouped sidebar layout. Rename
+    and removal live in Project settings, so the menu points there instead of
+    duplicating them. */
+export function buildProjectHeaderMenuItems(options: {
+  readonly projectLabel: string;
+  readonly isFiltered: boolean;
+  readonly hasPath: boolean;
+}): ReadonlyArray<ContextMenuItem<ProjectHeaderMenuId>> {
+  return [
+    { id: "new-thread", label: "New thread", icon: "message-square-plus" },
+    {
+      id: "filter-by-project",
+      label: options.isFiltered ? "Show all projects" : `Filter by ${options.projectLabel}`,
+      icon: "folder-tree",
+    },
+    ...(options.hasPath ? [{ id: "copy-path" as const, label: "Copy path", icon: "copy" }] : []),
+    { id: "project-settings", label: "Project settings", icon: "settings", separatorBefore: true },
+  ];
+}
+
 /** Right-click menu for an unsent draft row in the sidebar. */
 export function buildDraftActionMenuItems(options: {
   readonly hasPath: boolean;

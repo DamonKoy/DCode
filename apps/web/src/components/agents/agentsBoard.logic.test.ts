@@ -3,9 +3,12 @@ import * as DateTime from "effect/DateTime";
 import type { OrchestrationV2Subagent, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 
 import {
+  agentDetailItemKind,
   agentsBoardColumnForStatus,
   buildAgentsBoardRows,
   groupAgentsBoardRows,
+  isScrolledToLatest,
+  resolveAgentDetailConnectionState,
   summarizeAgentsBoard,
 } from "./agentsBoard.logic.ts";
 
@@ -165,5 +168,57 @@ describe("groupAgentsBoardRows", () => {
       ["failed", 1],
     ]);
     expect(summarizeAgentsBoard(rows)).toEqual({ total: 4, working: 1, waiting: 1, failed: 1 });
+  });
+});
+
+describe("resolveAgentDetailConnectionState", () => {
+  it("treats a dropped stream as interrupted, never as a stopped task", () => {
+    expect(resolveAgentDetailConnectionState("cached")).toBe("interrupted");
+  });
+
+  it("maps each client thread status to its own connection state", () => {
+    expect(resolveAgentDetailConnectionState("live")).toBe("live");
+    expect(resolveAgentDetailConnectionState("synchronizing")).toBe("connecting");
+    expect(resolveAgentDetailConnectionState("empty")).toBe("pending");
+    expect(resolveAgentDetailConnectionState("deleted")).toBe("gone");
+  });
+});
+
+describe("agentDetailItemKind", () => {
+  it("folds tool and execution items behind a disclosure", () => {
+    for (const type of [
+      "command_execution",
+      "dynamic_tool",
+      "file_search",
+      "web_search",
+      "file_change",
+    ]) {
+      expect(agentDetailItemKind(type)).toBe("tool");
+    }
+  });
+
+  it("reads assistant output and progress inline", () => {
+    for (const type of [
+      "assistant_message",
+      "reasoning",
+      "notification",
+      "error",
+      "user_message",
+    ]) {
+      expect(agentDetailItemKind(type)).toBe("text");
+    }
+  });
+});
+
+describe("isScrolledToLatest", () => {
+  it("is true at the bottom and within the follow threshold", () => {
+    expect(isScrolledToLatest({ scrollTop: 400, scrollHeight: 500, clientHeight: 100 })).toBe(true);
+    expect(isScrolledToLatest({ scrollTop: 360, scrollHeight: 500, clientHeight: 100 })).toBe(true);
+  });
+
+  it("is false once the reader scrolls up past the threshold", () => {
+    expect(isScrolledToLatest({ scrollTop: 300, scrollHeight: 500, clientHeight: 100 })).toBe(
+      false,
+    );
   });
 });
