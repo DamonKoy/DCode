@@ -13,6 +13,8 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ProviderEventLoggers from "../ProviderEventLoggers.ts";
+import { makeTargetedProviderUpdateAction } from "../providerMaintenance.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { GrokDriver } from "./GrokDriver.ts";
 
 import * as IdAllocator from "../../orchestration-v2/IdAllocator.ts";
@@ -101,5 +103,56 @@ it.layer(layerTest)("GrokDriver", (it) => {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
       Effect.scoped,
     ),
+  );
+
+  // An npm global install owns a `<prefix>/lib/node_modules/@xai-official/grok`
+  // tree. `grok update` does not upgrade that tree, so the resolver must run
+  // npm — otherwise the command that runs never matches the npm `latest` the
+  // advisory compared against and the update reports `unchanged`.
+  it.effect.skipIf(windowsHost || !symlinksSupported)(
+    "upgrades an npm-owned install through npm",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-npm-" });
+        const target = path.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@xai-official",
+          "grok",
+          "bin",
+          "grok.js",
+        );
+        yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+        yield* fs.writeFileString(target, "#!/bin/sh\n");
+        yield* fs.chmod(target, 0o755);
+        const binaryPath = path.join(tempDir, "bin", "grok");
+        yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+        yield* fs.symlink(target, binaryPath);
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-npm"),
+          displayName: "Grok test",
+          enabled: false,
+          environment: [],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        });
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.update?.executable).toBe("npm");
+        expect(capabilities.update?.lockKey.startsWith("npm-global:")).toBe(true);
+        expect(capabilities.update?.args).toEqual(
+          expect.arrayContaining(["install", "-g", "@xai-official/grok@latest"]),
+        );
+        // A lock key the runner owns is what makes a pinned version installable.
+        expect(makeTargetedProviderUpdateAction(capabilities, "1.0.50")?.args).toEqual(
+          expect.arrayContaining(["@xai-official/grok@1.0.50"]),
+        );
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
+        Effect.scoped,
+      ),
   );
 });
