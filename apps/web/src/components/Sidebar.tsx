@@ -228,6 +228,7 @@ import {
   sliceSidebarProjectThreads,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
+  sortGroupedProjectThreads,
   sortSidebarV2ProjectGroups,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
@@ -2534,6 +2535,7 @@ export default function Sidebar() {
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const groupedByProject = useClientSettings((s) => s.sidebarThreadGroupingMode) === "projects";
+  const sidebarThreadSortOrder = useClientSettings((s) => s.sidebarThreadSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -3060,6 +3062,11 @@ export default function Sidebar() {
     if (!groupedByProject) return null;
     const isRouteThread = (thread: EnvironmentThreadShell) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === routeThreadKey;
+    const pinnedThreadKeys = new Set(
+      pinnedThreads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      ),
+    );
     return buildSidebarProjectSections({
       projects: scopedProjectGroup === null ? projectGroups : [scopedProjectGroup],
       threads: [
@@ -3070,7 +3077,18 @@ export default function Sidebar() {
         ...settledThreads,
       ],
       includeEmptyProjects: true,
-    }).map((section) => {
+    }).map((groupedSection) => {
+      // Lifecycle shelves are flat-layout structure. Inside a project, only
+      // pins stay on top; everything else orders by the thread sort order.
+      const section = {
+        ...groupedSection,
+        threads: sortGroupedProjectThreads(
+          groupedSection.threads,
+          sidebarThreadSortOrder,
+          (thread) =>
+            pinnedThreadKeys.has(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+        ),
+      };
       const expanded = resolveProjectExpanded(
         projectExpandedById,
         projectExpansionPreferenceKeys(section.project),
@@ -3102,6 +3120,7 @@ export default function Sidebar() {
     routeThreadKey,
     scopedProjectGroup,
     settledThreads,
+    sidebarThreadSortOrder,
     snoozedThreads,
     workingThreads,
   ]);

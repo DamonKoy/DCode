@@ -25,6 +25,9 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Project grouping": "项目分组",
   "Project order": "项目顺序",
   "Sidebar layout": "侧栏布局",
+  "Thread order": "会话顺序",
+  "Order of threads inside each project when the sidebar groups threads by project. Pinned threads stay on top.":
+    "侧栏按项目分组时，每个项目内的会话顺序。置顶会话始终在最上面。",
   Sections: "分区",
   "Project groups": "按项目分组",
   "Arrange threads by lifecycle section, or group them under their project.":

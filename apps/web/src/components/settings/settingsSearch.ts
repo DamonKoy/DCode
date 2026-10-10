@@ -320,6 +320,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["group threads by project sections lifecycle sidebar layout tree codex"],
   },
   {
+    id: "thread-order",
+    title: "Thread order",
+    to: "/settings/general",
+    searchTerms: ["sort threads project recent created updated message sidebar"],
+  },
+  {
     id: "snooze-limited-threads",
     title: "Snooze limited threads",
     to: "/settings/general",

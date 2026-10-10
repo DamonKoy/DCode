@@ -12,6 +12,7 @@ import {
   buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
   buildSidebarProjectSections,
+  sortGroupedProjectThreads,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
@@ -2470,5 +2471,33 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("sortGroupedProjectThreads", () => {
+  const thread = (id: string, createdAt: string, latestUserMessageAt: string, pinned = false) => ({
+    id,
+    createdAt,
+    updatedAt: createdAt,
+    latestUserMessageAt,
+    pinned,
+  });
+  const threads = [
+    thread("old-pinned", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", true),
+    thread("old-active", "2026-02-01T00:00:00Z", "2026-02-01T00:00:00Z"),
+    thread("new-settled", "2026-01-15T00:00:00Z", "2026-03-01T00:00:00Z"),
+    thread("newest-created", "2026-03-10T00:00:00Z", "2026-03-10T00:00:00Z"),
+  ];
+
+  it("keeps pins on top and merges every other thread by last user message", () => {
+    expect(
+      sortGroupedProjectThreads(threads, "updated_at", (t) => t.pinned).map((t) => t.id),
+    ).toEqual(["old-pinned", "newest-created", "new-settled", "old-active"]);
+  });
+
+  it("orders by creation time when asked", () => {
+    expect(
+      sortGroupedProjectThreads(threads, "created_at", (t) => t.pinned).map((t) => t.id),
+    ).toEqual(["old-pinned", "newest-created", "old-active", "new-settled"]);
   });
 });

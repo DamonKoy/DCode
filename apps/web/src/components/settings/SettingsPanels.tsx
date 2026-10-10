@@ -47,6 +47,7 @@ import {
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
   SidebarThreadGroupingMode,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -195,6 +196,12 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: settingsText("Manual"),
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_THREAD_SORT_ORDER_LABELS: Record<SidebarThreadSortOrder, string> = {
+  updated_at: settingsText("Last user message"),
+  created_at: settingsText("Created at"),
+};
+const isSidebarThreadSortOrder = Schema.is(SidebarThreadSortOrder);
 
 const SIDEBAR_THREAD_GROUPING_MODE_LABELS: Record<SidebarThreadGroupingMode, string> = {
   sections: settingsText("Sections"),
@@ -588,6 +595,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadGroupingMode !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode
         ? ["Sidebar layout"]
         : []),
+      ...(settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder
+        ? ["Thread order"]
+        : []),
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -728,6 +738,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarThreadGroupingMode,
+      settings.sidebarThreadSortOrder,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -829,6 +840,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarThreadGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarThreadGroupingMode,
+      sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2390,6 +2402,46 @@ export function GeneralSettingsPanel() {
                 {SidebarThreadGroupingMode.literals.map((mode) => (
                   <SelectItem hideIndicator key={mode} value={mode}>
                     {SIDEBAR_THREAD_GROUPING_MODE_LABELS[mode]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-order")}
+          description="Order of threads inside each project when the sidebar groups threads by project. Pinned threads stay on top."
+          resetAction={
+            settings.sidebarThreadSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder ? (
+              <SettingResetButton
+                label="thread order"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarThreadSortOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarThreadSortOrder}
+              onValueChange={(value) => {
+                if (isSidebarThreadSortOrder(value)) {
+                  updateSettings({ sidebarThreadSortOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
+                <SelectValue>
+                  {SIDEBAR_THREAD_SORT_ORDER_LABELS[settings.sidebarThreadSortOrder]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarThreadSortOrder.literals.map((sortOrder) => (
+                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                    {SIDEBAR_THREAD_SORT_ORDER_LABELS[sortOrder]}
                   </SelectItem>
                 ))}
               </SelectPopup>

@@ -1527,6 +1527,25 @@ export function buildSidebarProjectSections<
 }
 
 /**
+ * Orders one project's threads for the grouped layout. Pinned threads keep
+ * the top in their incoming (user-arranged) order; every other thread, whatever
+ * its lifecycle state, merges into a single list by the thread sort order, so a
+ * thread with a fresh message surfaces instead of waiting behind its shelf.
+ */
+export function sortGroupedProjectThreads<
+  TThread extends { readonly id: string } & ThreadSortInput,
+>(
+  threads: readonly TThread[],
+  sortOrder: SidebarThreadSortOrder,
+  isPinned: (thread: TThread) => boolean,
+): TThread[] {
+  const pinned: TThread[] = [];
+  const rest: TThread[] = [];
+  for (const thread of threads) (isPinned(thread) ? pinned : rest).push(thread);
+  return [...pinned, ...sortThreads(rest, sortOrder)];
+}
+
+/**
  * The rows a project renders in the grouped layout, and how many sit behind
  * its "show more" row. Nothing is ever silently hidden: `hiddenCount` is what
  * that row renders.
