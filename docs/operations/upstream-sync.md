@@ -23,6 +23,14 @@ DCode feature into the new shape, for example by adding a new scan source to ups
 parallel list or adding upstream's permission check to a DCode action. Do not revert
 upstream's version.
 
+Upstream sometimes moves a file into another package. Git usually carries DCode's edits to the
+new path, but a file that DCode changed and upstream deleted shows up as a modify/delete
+conflict. Find the new home with `git log --diff-filter=R -M --name-status <base>..upstream/main`,
+take upstream's version there, and re-apply DCode's change by hand. A module that now lives in
+a package cannot import from `apps/server`, so DCode-only helpers it needs (for example
+`codeBuddyAcp.ts`) move into that package too. Before installing anything, scan for relative
+imports that no longer resolve; a missing file is cheaper to find than a failing typecheck.
+
 Verify with the tests for the conflicted files and for DCode's own features. Then open a PR
 into `main`.
 
