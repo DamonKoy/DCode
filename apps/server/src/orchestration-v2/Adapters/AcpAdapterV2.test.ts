@@ -2889,9 +2889,11 @@ describe("AcpAdapterV2", () => {
     const workerId = "agent-0f1e2d3c-4b5a-4968-8776-655443322110";
     const openCodeBuddySession = Effect.fnUntraced(function* (input: {
       readonly name: string;
-      readonly flow: "notification" | "taskoutput" | "permission";
+      readonly flow: "notification" | "notification-report" | "taskoutput" | "permission";
       readonly runtimeMode: "full-access" | "approval-required";
       readonly environment?: Record<string, string>;
+      /** Offered continuations land here once post-settle continuation is on. */
+      readonly continuationRequests?: Queue.Queue<ProviderContinuationRequest>;
     }) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2911,6 +2913,9 @@ describe("AcpAdapterV2", () => {
           capabilities: AcpProviderCapabilitiesV2,
           extractSubagentUpdate: extractCodeBuddySubagentUpdate,
           extractSubagentEndNotice: extractCodeBuddySubagentEndNotice,
+          ...(input.continuationRequests === undefined
+            ? {}
+            : { enablePostSettleContinuation: true }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -2924,6 +2929,13 @@ describe("AcpAdapterV2", () => {
         idAllocator,
         serverConfig,
         selfInvocation,
+        ...(input.continuationRequests === undefined
+          ? {}
+          : {
+              continuationRequests: {
+                offer: (request) => Queue.offer(input.continuationRequests!, request),
+              },
+            }),
       });
       const threadId = ThreadId.make(`thread-acp-codebuddy-${input.name}`);
       const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -2957,7 +2969,7 @@ describe("AcpAdapterV2", () => {
           now: yield* DateTime.now,
         }),
       );
-      return { runtime, events, threadId };
+      return { runtime, events, threadId, providerThread, instanceId, runtimePolicy };
     });
 
     const takeUntil = Effect.fnUntraced(function* (
@@ -3009,6 +3021,61 @@ describe("AcpAdapterV2", () => {
         const childRoot = nodes.filter((node) => node.kind === "root_turn").at(-1);
         assert.equal(childRoot?.status, "completed");
         assert.isNotNull(childRoot?.completedAt ?? null);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("projects the agent's own report after a worker ends as a continuation run", () =>
+      Effect.gen(function* () {
+        const continuationRequests = yield* Queue.unbounded<ProviderContinuationRequest>();
+        const { runtime, events, threadId, providerThread, instanceId, runtimePolicy } =
+          yield* openCodeBuddySession({
+            name: "report",
+            flow: "notification-report",
+            runtimeMode: "full-access",
+            continuationRequests,
+          });
+        const seen: Array<ProviderAdapterV2Event> = [];
+        yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
+
+        // The report arrives after the prompt settled. It must ask for a run
+        // instead of vanishing, and it must ask exactly once.
+        const request = yield* Queue.take(continuationRequests);
+        assert.equal(request.threadId, threadId);
+        assert.equal(request.providerThreadId, providerThread.id);
+
+        const continuationInput = makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+          ordinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+          messageText: "Background task completed.",
+        });
+        yield* runtime.startTurn(continuationInput);
+        const reported: Array<ProviderAdapterV2Event> = [];
+        const reportText = () =>
+          reported
+            .flatMap((event) =>
+              event.type === "message.updated" && event.message.role === "assistant"
+                ? [event.message.text]
+                : [],
+            )
+            .at(-1) ?? "";
+        yield* takeUntil(events, reported, () => reportText().includes("42 files"));
+        // The continuation has no prompt response to end it, so the adapter
+        // settles it once the agent has been quiet for a while.
+        yield* TestClock.adjust("5 seconds");
+        const terminal = yield* takeUntil(
+          events,
+          reported,
+          (event) => event.type === "turn.terminal",
+        );
+        assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "completed");
+        assert.include(reportText(), "The worker counted 42 files.");
+        assert.isTrue(Option.isNone(yield* Queue.poll(continuationRequests)));
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 

@@ -3095,6 +3095,17 @@ export function makeAcpAdapterV2(
         const isMonitorEndNoticeText = (text: string): boolean =>
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
+        /**
+         * Whether a settled turn ends by waiting out a quiet window instead of by
+         * its prompt response. A continuation attaches to traffic the agent produced
+         * on its own, so no prompt response will ever end it, whatever the flavor
+         * says about holding ordinary turns open for background work.
+         */
+        const finalizesAfterQuietWindow = (context: ActiveAcpTurn): boolean =>
+          flavor.deferFinalizeForBackgroundWork === true ||
+          (postSettleContinuationEnabled &&
+            acpIsProviderContinuationMessage(context.input.message));
+
         const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
           if (context.awaitingBackgroundHydration.size > 0) return true;
           if (context.pendingInjectedReport.size > 0) return true;
@@ -3118,7 +3129,7 @@ export function makeAcpAdapterV2(
         // assigned after finalizeTurn so forked finalize Effect typing stays clean.
         const rearmDeferredFinalize = (context: ActiveAcpTurn) =>
           Effect.gen(function* () {
-            if (!flavor.deferFinalizeForBackgroundWork) return;
+            if (!finalizesAfterQuietWindow(context)) return;
             if (!context.promptSettled || context.finalized) return;
             if (hasDeferredBackgroundWork(context)) return;
             yield* scheduleDeferredFinalize(context);
@@ -6948,7 +6959,7 @@ export function makeAcpAdapterV2(
 
         scheduleDeferredFinalize = (context) =>
           Effect.gen(function* () {
-            if (!flavor.deferFinalizeForBackgroundWork) return;
+            if (!finalizesAfterQuietWindow(context)) return;
             if (!context.promptSettled || context.finalized || context.interrupted) return;
             if (hasDeferredBackgroundWork(context)) return;
             context.backgroundFinalizeGeneration += 1;
