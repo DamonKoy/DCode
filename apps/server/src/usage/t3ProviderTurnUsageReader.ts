@@ -8,7 +8,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import type { UsageProviderKind, UsageTokenTotals } from "@t3tools/contracts";
 
-import type { UsageRecord } from "./usageTranscripts.ts";
+import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 /**
  * Drivers whose usage is only available from DCode's persisted per-turn data,

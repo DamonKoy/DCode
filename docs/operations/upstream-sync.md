@@ -64,7 +64,7 @@ These make tests fail for reasons unrelated to the merge:
   Windows payload probe in `build-desktop-artifact.test.ts`. Run tests with
   `env -u ELECTRON_RUN_AS_NODE`.
 - Some registry mirrors time out on large tarballs such as `@effect/tsgo-*`. Install with
-  `npm_config_registry=https://registry.npmjs.org/`, then discard any `pnpm-lock.yaml`
+  `pnpm_config_registry=https://registry.npmjs.org/` (pnpm 11 ignores `npm_config_registry`), then discard any `pnpm-lock.yaml`
   change that only rewrites a deprecation message.
 - Integration tests can time out when many suites run at once. Rerun one alone before
   treating it as a regression.
