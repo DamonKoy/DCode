@@ -2584,17 +2584,14 @@ describe("AcpAdapterV2", () => {
   }) {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
-    const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const path = yield* Path.Path;
-    const serverConfig = yield* ServerConfig.ServerConfig;
     const selfInvocation = yield* resolveSelfInvocation();
     const mockAgentPath = yield* path.fromFileUrl(
       new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
     );
     type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
     let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
-    const adapter = makeAcpAdapterV2({
-      crypto: yield* Crypto.Crypto,
+    const adapter = yield* makeAcpAdapterV2({
       instanceId: input.instanceId,
       flavor: {
         driver: ACP_TEST_DRIVER,
@@ -2611,12 +2608,9 @@ describe("AcpAdapterV2", () => {
           }),
         }),
       },
-      fileSystem,
-      idAllocator,
-      serverConfig,
       selfInvocation,
     });
-    const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
       runtimeMode: input.runtimeMode,
       interactionMode: "default",
       cwd: process.cwd(),
@@ -2635,7 +2629,7 @@ describe("AcpAdapterV2", () => {
     });
     // One consumer only: the adapter's stream is not replayable, so the turn
     // terminal has to be read off this same buffered queue.
-    const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
     yield* runtime.events.pipe(
       Stream.runForEach((event) => Queue.offer(events, event)),
       Effect.forkScoped,
@@ -2701,16 +2695,13 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const instanceId = ProviderInstanceId.make("acp-test-refusal");
-      const adapter = makeAcpAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2721,13 +2712,10 @@ describe("AcpAdapterV2", () => {
             environment: { T3_ACP_REFUSE_PROMPT: "1" },
           }),
         },
-        fileSystem,
-        idAllocator,
-        serverConfig,
         selfInvocation,
       });
       const threadId = ThreadId.make("thread-acp-refusal");
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
         interactionMode: "default",
         cwd: process.cwd(),
@@ -2776,20 +2764,17 @@ describe("AcpAdapterV2", () => {
       readonly runtimeMode: "full-access" | "approval-required";
       readonly environment?: Record<string, string>;
       /** Offered continuations land here once post-settle continuation is on. */
-      readonly continuationRequests?: Queue.Queue<ProviderContinuationRequest>;
+      readonly continuationRequests?: Queue.Queue<ProviderContinuationRequests.ProviderContinuationRequest>;
     }) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const path = yield* Path.Path;
-      const serverConfig = yield* ServerConfig.ServerConfig;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
       const instanceId = ProviderInstanceId.make(`acp-test-codebuddy-${input.name}`);
-      const adapter = makeAcpAdapterV2({
-        crypto: yield* Crypto.Crypto,
+      const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
@@ -2808,9 +2793,6 @@ describe("AcpAdapterV2", () => {
             },
           }),
         },
-        fileSystem,
-        idAllocator,
-        serverConfig,
         selfInvocation,
         ...(input.continuationRequests === undefined
           ? {}
@@ -2821,7 +2803,7 @@ describe("AcpAdapterV2", () => {
             }),
       });
       const threadId = ThreadId.make(`thread-acp-codebuddy-${input.name}`);
-      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: input.runtimeMode,
         interactionMode: "default",
         cwd: process.cwd(),
@@ -2833,7 +2815,7 @@ describe("AcpAdapterV2", () => {
         modelSelection,
         runtimePolicy,
       });
-      const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
       yield* runtime.events.pipe(
         Stream.runForEach((event) => Queue.offer(events, event)),
         Effect.forkScoped,
@@ -2856,9 +2838,9 @@ describe("AcpAdapterV2", () => {
     });
 
     const takeUntil = Effect.fnUntraced(function* (
-      events: Queue.Queue<ProviderAdapterV2Event>,
-      seen: Array<ProviderAdapterV2Event>,
-      predicate: (event: ProviderAdapterV2Event) => boolean,
+      events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>,
+      seen: Array<ProviderAdapter.ProviderAdapterV2Event>,
+      predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
     ) {
       while (true) {
         const event = yield* Queue.take(events);
@@ -2867,7 +2849,7 @@ describe("AcpAdapterV2", () => {
       }
     });
 
-    const isWorkerTerminal = (event: ProviderAdapterV2Event) =>
+    const isWorkerTerminal = (event: ProviderAdapter.ProviderAdapterV2Event) =>
       event.type === "subagent.updated" &&
       event.subagent.nativeTaskRef?.nativeId === workerId &&
       event.subagent.status !== "running" &&
@@ -2880,7 +2862,7 @@ describe("AcpAdapterV2", () => {
           flow: "notification",
           runtimeMode: "full-access",
         });
-        const seen: Array<ProviderAdapterV2Event> = [];
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         const terminal = yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
         assert.equal(terminal.type === "turn.terminal" ? terminal.status : null, "completed");
         const running = seen.flatMap((event) =>
@@ -2909,7 +2891,8 @@ describe("AcpAdapterV2", () => {
 
     it.effect("projects the agent's own report after a worker ends as a continuation run", () =>
       Effect.gen(function* () {
-        const continuationRequests = yield* Queue.unbounded<ProviderContinuationRequest>();
+        const continuationRequests =
+          yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
         const { runtime, events, threadId, providerThread, instanceId, runtimePolicy } =
           yield* openCodeBuddySession({
             name: "report",
@@ -2917,7 +2900,7 @@ describe("AcpAdapterV2", () => {
             runtimeMode: "full-access",
             continuationRequests,
           });
-        const seen: Array<ProviderAdapterV2Event> = [];
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
 
         // The report arrives after the prompt settled. It must ask for a run
@@ -2938,7 +2921,7 @@ describe("AcpAdapterV2", () => {
           messageText: "Background task completed.",
         });
         yield* runtime.startTurn(continuationInput);
-        const reported: Array<ProviderAdapterV2Event> = [];
+        const reported: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         const reportText = () =>
           reported
             .flatMap((event) =>
@@ -2969,7 +2952,7 @@ describe("AcpAdapterV2", () => {
           flow: "taskoutput",
           runtimeMode: "full-access",
         });
-        const seen: Array<ProviderAdapterV2Event> = [];
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
         const closed = yield* takeUntil(events, seen, isWorkerTerminal);
         assert.equal(
@@ -2996,7 +2979,7 @@ describe("AcpAdapterV2", () => {
           runtimeMode: "approval-required",
           environment: { T3_ACP_CODEBUDDY_PERMISSION_LOG_PATH: logPath },
         });
-        const seen: Array<ProviderAdapterV2Event> = [];
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
         yield* takeUntil(events, seen, (event) => event.type === "turn.terminal");
         const pending = yield* takeUntil(
           events,
