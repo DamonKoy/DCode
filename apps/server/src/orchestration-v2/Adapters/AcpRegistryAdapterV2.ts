@@ -38,6 +38,7 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterDriverCreateError,
@@ -71,6 +72,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly runtimeCoordinator?: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"];
   readonly serverConfig: ServerConfig.ServerConfig["Service"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
+  readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -218,11 +220,15 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
     // A finished worker is announced by an injected `<task-notification>` user
     // message, often after the root turn already settled; that notice is the
     // only end signal when the agent never polls the worker again.
+    // The same notice also wakes the agent, which then reports the result on
+    // its own turn with no `session/prompt` around it. Post-settle continuation
+    // turns that report into a run instead of dropping it from the thread.
     ...(isDevin
       ? {}
       : {
           extractSubagentUpdate: extractCodeBuddySubagentUpdate,
           extractSubagentEndNotice: extractCodeBuddySubagentEndNotice,
+          enablePostSettleContinuation: true,
         }),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
     ...(runtimeCoordinator === undefined
@@ -275,6 +281,9 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
         }
       : {}),
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
+    ...(options.continuationRequests === undefined
+      ? {}
+      : { continuationRequests: options.continuationRequests }),
   });
 }
 
@@ -305,6 +314,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const serverConfig = yield* ServerConfig.ServerConfig;
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       const resolver = yield* AcpRegistrySupport.AcpRegistryCatalog;
       const runtimeCoordinator = yield* Effect.serviceOption(
@@ -324,6 +334,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
           : {}),
         serverConfig,
         selfInvocation,
+        continuationRequests,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

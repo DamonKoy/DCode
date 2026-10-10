@@ -30,7 +30,8 @@ const emitPostSettleMonitorFlow = process.env.T3_ACP_EMIT_POST_SETTLE_MONITOR_FL
 /**
  * CodeBuddy multitask shape: an `Agent` dispatch that detaches a background
  * worker, then (after the prompt settled) the worker's end. "notification"
- * ends it with an injected `<task-notification>` only, "taskoutput" with a
+ * ends it with an injected `<task-notification>` only, "notification-report" adds the
+ * agent's own report turn after it, "taskoutput" with a
  * `TaskOutput` poll, and "permission" first asks for a post-settle permission.
  */
 const codeBuddyWorkerFlow = process.env.T3_ACP_EMIT_CODEBUDDY_WORKER_FLOW;
@@ -2148,6 +2149,38 @@ const program = Effect.gen(function* () {
                 },
               },
             });
+            if (codeBuddyWorkerFlow !== "notification-report") return;
+            // The notification wakes the agent: it reads the worker's output and
+            // reports it on a turn of its own, with no session/prompt around it.
+            for (const update of [
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "call-task-output-report-1",
+                title: "TaskOutput",
+                kind: "other",
+                status: "pending",
+                rawInput: { block: false, task_id: workerId },
+              },
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "call-task-output-report-1",
+                status: "completed",
+                rawOutput: {
+                  type: "text",
+                  text: `Task ID: ${workerId}\nStatus: completed\n\nResponse:\nThere are 42 files.`,
+                },
+              },
+              {
+                sessionUpdate: "agent_message_chunk",
+                messageId: "mock-worker-report",
+                content: { type: "text", text: "The worker counted 42 files." },
+              },
+            ]) {
+              writeJsonRpcNotification("session/update", {
+                sessionId: requestedSessionId,
+                update,
+              });
+            }
           });
         }).pipe(Effect.forkDetach);
         return yield* finishPrompt(requestedSessionId, "end_turn");
